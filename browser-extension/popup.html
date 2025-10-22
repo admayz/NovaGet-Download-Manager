@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Download Manager</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      width: 350px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: #f5f5f5;
+    }
+    
+    .header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 20px;
+      text-align: center;
+    }
+    
+    .header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 5px;
+    }
+    
+    .header p {
+      font-size: 12px;
+      opacity: 0.9;
+    }
+    
+    .status {
+      padding: 15px 20px;
+      background: white;
+      border-bottom: 1px solid #e0e0e0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    
+    .status-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #ccc;
+    }
+    
+    .status-dot.connected {
+      background: #4CAF50;
+      box-shadow: 0 0 8px rgba(76, 175, 80, 0.5);
+    }
+    
+    .status-text {
+      font-size: 13px;
+      color: #666;
+    }
+    
+    .content {
+      padding: 20px;
+    }
+    
+    .add-download {
+      margin-bottom: 20px;
+    }
+    
+    .add-download label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      color: #333;
+      margin-bottom: 8px;
+    }
+    
+    .add-download input {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 13px;
+      margin-bottom: 10px;
+    }
+    
+    .add-download input:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+    
+    .btn {
+      width: 100%;
+      padding: 10px;
+      border: none;
+      border-radius: 4px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    
+    .btn-primary {
+      background: #667eea;
+      color: white;
+    }
+    
+    .btn-primary:hover {
+      background: #5568d3;
+    }
+    
+    .btn-primary:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+    
+    .settings {
+      margin-top: 20px;
+      padding-top: 20px;
+      border-top: 1px solid #e0e0e0;
+    }
+    
+    .setting-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 15px;
+    }
+    
+    .setting-item label {
+      font-size: 13px;
+      color: #333;
+      cursor: pointer;
+    }
+    
+    .toggle {
+      position: relative;
+      width: 44px;
+      height: 24px;
+    }
+    
+    .toggle input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #ccc;
+      transition: 0.3s;
+      border-radius: 24px;
+    }
+    
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 18px;
+      width: 18px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: 0.3s;
+      border-radius: 50%;
+    }
+    
+    input:checked + .slider {
+      background-color: #667eea;
+    }
+    
+    input:checked + .slider:before {
+      transform: translateX(20px);
+    }
+    
+    .footer {
+      padding: 15px 20px;
+      background: white;
+      border-top: 1px solid #e0e0e0;
+      text-align: center;
+    }
+    
+    .footer a {
+      color: #667eea;
+      text-decoration: none;
+      font-size: 12px;
+    }
+    
+    .footer a:hover {
+      text-decoration: underline;
+    }
+    
+    .message {
+      padding: 10px;
+      border-radius: 4px;
+      font-size: 12px;
+      margin-bottom: 15px;
+      display: none;
+    }
+    
+    .message.success {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+    
+    .message.error {
+      background: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Download Manager</h1>
+    <p>Browser Integration</p>
+  </div>
+  
+  <div class="status">
+    <div class="status-indicator">
+      <div class="status-dot" id="statusDot"></div>
+      <span class="status-text" id="statusText">Checking connection...</span>
+    </div>
+  </div>
+  
+  <div class="content">
+    <div id="message" class="message"></div>
+    
+    <div class="add-download">
+      <label for="urlInput">Add Download URL</label>
+      <input type="text" id="urlInput" placeholder="https://example.com/file.zip">
+      <button class="btn btn-primary" id="addBtn">Add Download</button>
+    </div>
+    
+    <div class="settings">
+      <div class="setting-item">
+        <label for="interceptToggle">Intercept Downloads</label>
+        <label class="toggle">
+          <input type="checkbox" id="interceptToggle">
+          <span class="slider"></span>
+        </label>
+      </div>
+      
+      <div class="setting-item">
+        <label for="clipboardToggle">Clipboard Watcher</label>
+        <label class="toggle">
+          <input type="checkbox" id="clipboardToggle">
+          <span class="slider"></span>
+        </label>
+      </div>
+    </div>
+  </div>
+  
+  <div class="footer">
+    <a href="options.html" target="_blank">Advanced Settings</a>
+  </div>
+  
+  <script src="popup.js"></script>
+</body>
+</html>
