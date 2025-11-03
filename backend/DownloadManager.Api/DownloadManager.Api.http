@@ -1,6 +1,0 @@
-@DownloadManager.Api_HostAddress = http://localhost:5274
-
-GET {{DownloadManager.Api_HostAddress}}/weatherforecast/
-Accept: application/json
-
-###

@@ -1,9 +1,0 @@
-{
-  "name": "com.downloadmanager.host",
-  "description": "Download Manager Native Messaging Host",
-  "path": "C:\\Users\\meade\\Documents\\Code\\DownloadManager\\ui\\dist-electron\\main.js",
-  "type": "stdio",
-  "allowed_origins": [
-    "chrome-extension://EXTENSION_ID_HERE/"
-  ]
-}

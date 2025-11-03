@@ -1,0 +1,411 @@
+/**
+ * Database service for managing downloads, segments, settings, and statistics
+ */
+
+import Database from 'better-sqlite3';
+import { app } from 'electron';
+import path from 'path';
+import fs from 'fs';
+import { MigrationManager } from './migrations';
+import {
+  DownloadRecord,
+  SegmentRecord,
+  SettingsRecord,
+  SpeedHistoryRecord,
+  Statistics,
+} from './types';
+
+export class DatabaseService {
+  private db: Database.Database;
+  private migrationManager: MigrationManager;
+
+  constructor(dbPath?: string) {
+    // Use provided path or default to user data directory
+    const defaultPath = path.join(app.getPath('userData'), 'novaget.db');
+    const finalPath = dbPath || defaultPath;
+
+    // Ensure directory exists
+    const dir = path.dirname(finalPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+
+    // Initialize database
+    this.db = new Database(finalPath);
+    this.migrationManager = new MigrationManager(this.db);
+    this.migrationManager.initialize();
+  }
+
+  // ==================== Download Operations ====================
+
+  /**
+   * Create a new download record
+   */
+  createDownload(record: Omit<DownloadRecord, 'id'>): string {
+    const id = this.generateId();
+    const stmt = this.db.prepare(`
+      INSERT INTO downloads (
+        id, url, filename, directory, total_bytes, downloaded_bytes,
+        status, category, tags, ai_suggested_name, scheduled_time,
+        speed_limit, created_at, completed_at, error_message
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    stmt.run(
+      id,
+      record.url,
+      record.filename,
+      record.directory,
+      record.total_bytes,
+      record.downloaded_bytes,
+      record.status,
+      record.category || null,
+      record.tags || null,
+      record.ai_suggested_name || null,
+      record.scheduled_time || null,
+      record.speed_limit || null,
+      record.created_at,
+      record.completed_at || null,
+      record.error_message || null
+    );
+
+    return id;
+  }
+
+  /**
+   * Update an existing download record
+   */
+  updateDownload(id: string, updates: Partial<DownloadRecord>): void {
+    const fields: string[] = [];
+    const values: any[] = [];
+
+    // Build dynamic update query
+    Object.entries(updates).forEach(([key, value]) => {
+      if (key !== 'id') {
+        fields.push(`${key} = ?`);
+        values.push(value);
+      }
+    });
+
+    if (fields.length === 0) return;
+
+    values.push(id);
+    const stmt = this.db.prepare(`
+      UPDATE downloads SET ${fields.join(', ')} WHERE id = ?
+    `);
+
+    stmt.run(...values);
+  }
+
+  /**
+   * Get a download record by ID
+   */
+  getDownload(id: string): DownloadRecord | null {
+    const stmt = this.db.prepare('SELECT * FROM downloads WHERE id = ?');
+    return stmt.get(id) as DownloadRecord | null;
+  }
+
+  /**
+   * Get all download records
+   */
+  getAllDownloads(): DownloadRecord[] {
+    const stmt = this.db.prepare('SELECT * FROM downloads ORDER BY created_at DESC');
+    return stmt.all() as DownloadRecord[];
+  }
+
+  /**
+   * Get downloads by status
+   */
+  getDownloadsByStatus(status: DownloadRecord['status']): DownloadRecord[] {
+    const stmt = this.db.prepare('SELECT * FROM downloads WHERE status = ? ORDER BY created_at DESC');
+    return stmt.all(status) as DownloadRecord[];
+  }
+
+  /**
+   * Get downloads by category
+   */
+  getDownloadsByCategory(category: string): DownloadRecord[] {
+    const stmt = this.db.prepare('SELECT * FROM downloads WHERE category = ? ORDER BY created_at DESC');
+    return stmt.all(category) as DownloadRecord[];
+  }
+
+  /**
+   * Delete a download record
+   */
+  deleteDownload(id: string): void {
+    const stmt = this.db.prepare('DELETE FROM downloads WHERE id = ?');
+    stmt.run(id);
+  }
+
+  // ==================== Segment Operations ====================
+
+  /**
+   * Save segment progress for a download
+   */
+  saveSegmentProgress(downloadId: string, segments: SegmentRecord[]): void {
+    const transaction = this.db.transaction(() => {
+      // Delete existing segments for this download
+      const deleteStmt = this.db.prepare('DELETE FROM segments WHERE download_id = ?');
+      deleteStmt.run(downloadId);
+
+      // Insert new segment data
+      const insertStmt = this.db.prepare(`
+        INSERT INTO segments (
+          download_id, segment_number, start_byte, end_byte,
+          downloaded_bytes, status, temp_file_path
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      for (const segment of segments) {
+        insertStmt.run(
+          segment.download_id,
+          segment.segment_number,
+          segment.start_byte,
+          segment.end_byte,
+          segment.downloaded_bytes,
+          segment.status,
+          segment.temp_file_path || null
+        );
+      }
+    });
+
+    transaction();
+  }
+
+  /**
+   * Get segment progress for a download
+   */
+  getSegmentProgress(downloadId: string): SegmentRecord[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM segments WHERE download_id = ? ORDER BY segment_number
+    `);
+    return stmt.all(downloadId) as SegmentRecord[];
+  }
+
+  /**
+   * Update a single segment
+   */
+  updateSegment(downloadId: string, segmentNumber: number, updates: Partial<SegmentRecord>): void {
+    const fields: string[] = [];
+    const values: any[] = [];
+
+    Object.entries(updates).forEach(([key, value]) => {
+      if (key !== 'id' && key !== 'download_id' && key !== 'segment_number') {
+        fields.push(`${key} = ?`);
+        values.push(value);
+      }
+    });
+
+    if (fields.length === 0) return;
+
+    values.push(downloadId, segmentNumber);
+    const stmt = this.db.prepare(`
+      UPDATE segments SET ${fields.join(', ')} 
+      WHERE download_id = ? AND segment_number = ?
+    `);
+
+    stmt.run(...values);
+  }
+
+  // ==================== Settings Operations ====================
+
+  /**
+   * Get a setting value
+   */
+  getSetting(key: string): string | null {
+    const stmt = this.db.prepare('SELECT value FROM settings WHERE key = ?');
+    const result = stmt.get(key) as SettingsRecord | undefined;
+    return result?.value || null;
+  }
+
+  /**
+   * Set a setting value
+   */
+  setSetting(key: string, value: string): void {
+    const now = Date.now();
+    const stmt = this.db.prepare(`
+      INSERT INTO settings (key, value, updated_at) 
+      VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = ?
+    `);
+    stmt.run(key, value, now, value, now);
+  }
+
+  /**
+   * Get all settings
+   */
+  getAllSettings(): Record<string, string> {
+    const stmt = this.db.prepare('SELECT key, value FROM settings');
+    const rows = stmt.all() as SettingsRecord[];
+    
+    const settings: Record<string, string> = {};
+    rows.forEach(row => {
+      settings[row.key] = row.value;
+    });
+    
+    return settings;
+  }
+
+  /**
+   * Delete a setting
+   */
+  deleteSetting(key: string): void {
+    const stmt = this.db.prepare('DELETE FROM settings WHERE key = ?');
+    stmt.run(key);
+  }
+
+  // ==================== Speed History Operations ====================
+
+  /**
+   * Add speed history entry
+   */
+  addSpeedHistory(downloadId: string, speed: number): void {
+    const now = Date.now();
+    const stmt = this.db.prepare(`
+      INSERT INTO speed_history (download_id, speed, timestamp)
+      VALUES (?, ?, ?)
+    `);
+    stmt.run(downloadId, speed, now);
+  }
+
+  /**
+   * Get speed history for a download
+   */
+  getSpeedHistory(downloadId: string, limit: number = 60): SpeedHistoryRecord[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM speed_history 
+      WHERE download_id = ? 
+      ORDER BY timestamp DESC 
+      LIMIT ?
+    `);
+    return stmt.all(downloadId, limit) as SpeedHistoryRecord[];
+  }
+
+  /**
+   * Clean old speed history (keep last 24 hours)
+   */
+  cleanOldSpeedHistory(): void {
+    const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+    const stmt = this.db.prepare('DELETE FROM speed_history WHERE timestamp < ?');
+    stmt.run(oneDayAgo);
+  }
+
+  // ==================== Statistics Operations ====================
+
+  /**
+   * Get download statistics
+   */
+  getStatistics(): Statistics {
+    const totalStmt = this.db.prepare(`
+      SELECT 
+        COUNT(*) as totalDownloads,
+        SUM(total_bytes) as totalBytes,
+        COUNT(CASE WHEN status = 'completed' THEN 1 END) as completedDownloads,
+        COUNT(CASE WHEN status = 'failed' THEN 1 END) as failedDownloads
+      FROM downloads
+    `);
+
+    const result = totalStmt.get() as any;
+
+    // Calculate average speed from completed downloads
+    const speedStmt = this.db.prepare(`
+      SELECT AVG(speed) as averageSpeed
+      FROM speed_history
+      WHERE download_id IN (
+        SELECT id FROM downloads WHERE status = 'completed'
+      )
+    `);
+
+    const speedResult = speedStmt.get() as any;
+
+    return {
+      totalDownloads: result.totalDownloads || 0,
+      totalBytes: result.totalBytes || 0,
+      completedDownloads: result.completedDownloads || 0,
+      failedDownloads: result.failedDownloads || 0,
+      averageSpeed: speedResult.averageSpeed || 0,
+    };
+  }
+
+  /**
+   * Get statistics by category
+   */
+  getStatisticsByCategory(): Record<string, { count: number; totalBytes: number }> {
+    const stmt = this.db.prepare(`
+      SELECT 
+        category,
+        COUNT(*) as count,
+        SUM(total_bytes) as totalBytes
+      FROM downloads
+      WHERE category IS NOT NULL
+      GROUP BY category
+    `);
+
+    const rows = stmt.all() as any[];
+    const stats: Record<string, { count: number; totalBytes: number }> = {};
+
+    rows.forEach(row => {
+      stats[row.category] = {
+        count: row.count,
+        totalBytes: row.totalBytes || 0,
+      };
+    });
+
+    return stats;
+  }
+
+  /**
+   * Get statistics by date range
+   */
+  getStatisticsByDateRange(startDate: number, endDate: number): Statistics {
+    const stmt = this.db.prepare(`
+      SELECT 
+        COUNT(*) as totalDownloads,
+        SUM(total_bytes) as totalBytes,
+        COUNT(CASE WHEN status = 'completed' THEN 1 END) as completedDownloads,
+        COUNT(CASE WHEN status = 'failed' THEN 1 END) as failedDownloads
+      FROM downloads
+      WHERE created_at >= ? AND created_at <= ?
+    `);
+
+    const result = stmt.get(startDate, endDate) as any;
+
+    return {
+      totalDownloads: result.totalDownloads || 0,
+      totalBytes: result.totalBytes || 0,
+      completedDownloads: result.completedDownloads || 0,
+      failedDownloads: result.failedDownloads || 0,
+      averageSpeed: 0, // Not calculated for date range
+    };
+  }
+
+  // ==================== Utility Methods ====================
+
+  /**
+   * Generate unique ID
+   */
+  private generateId(): string {
+    return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  }
+
+  /**
+   * Close database connection
+   */
+  close(): void {
+    this.db.close();
+  }
+
+  /**
+   * Get database instance (for advanced operations)
+   */
+  getDatabase(): Database.Database {
+    return this.db;
+  }
+
+  /**
+   * Reset database (for development/testing)
+   */
+  reset(): void {
+    this.migrationManager.reset();
+  }
+}

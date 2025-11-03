@@ -1,51 +1,40 @@
-# Node modules
-node_modules/
+# Dependencies
+node_modules
+/.pnp
+.pnp.js
+
+# Testing
+/coverage
+
+# Next.js
+/.next/
+/out/
+
+# Production
+/dist
+/release
+
+# Misc
+.DS_Store
+*.pem
+
+# Debug
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Build outputs
-dist/
-dist-electron/
-release/
-build/
-out/
+# Local env files
+.env*.local
 
-# .NET
-bin/
-obj/
-*.user
-*.suo
-*.cache
-.vs/
+# Vercel
+.vercel
 
-# Environment variables
-.env
-.env.local
-.env.*.local
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS
-.DS_Store
-Thumbs.db
-desktop.ini
-
-# Logs
-logs/
-*.log
-
-# Temporary files
-tmp/
+# Electron
+*.db
+*.db-shm
+*.db-wal
 temp/
-*.tmp
-
-# Package manager
-package-lock.json
-yarn.lock
-pnpm-lock.yaml

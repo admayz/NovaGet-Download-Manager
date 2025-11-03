@@ -1,0 +1,1 @@
+export { TrayManager } from './TrayManager';
