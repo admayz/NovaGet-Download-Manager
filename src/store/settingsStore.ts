@@ -15,6 +15,13 @@ export interface AppSettings {
   enableSmartNaming: boolean;
   enableAutoTagging: boolean;
 
+  // Security settings
+  virusTotalApiKey: string;
+  enableVirusScan: boolean;
+  autoScanDownloads: boolean;
+  scanBeforeDownload: boolean;
+  scanAfterDownload: boolean;
+
   // Appearance settings
   theme: 'light' | 'dark';
   language: string;
@@ -47,6 +54,11 @@ interface SettingsState extends AppSettings {
   setEnableAutoCategorization: (enabled: boolean) => void;
   setEnableSmartNaming: (enabled: boolean) => void;
   setEnableAutoTagging: (enabled: boolean) => void;
+  setVirusTotalApiKey: (apiKey: string) => void;
+  setEnableVirusScan: (enabled: boolean) => void;
+  setAutoScanDownloads: (enabled: boolean) => void;
+  setScanBeforeDownload: (enabled: boolean) => void;
+  setScanAfterDownload: (enabled: boolean) => void;
   setTheme: (theme: 'light' | 'dark') => void;
   setLanguage: (language: string) => void;
   setEnableClipboardWatch: (enabled: boolean) => void;
@@ -64,6 +76,11 @@ const DEFAULT_SETTINGS: AppSettings = {
   enableAutoCategorization: true,
   enableSmartNaming: true,
   enableAutoTagging: true,
+  virusTotalApiKey: '',
+  enableVirusScan: false,
+  autoScanDownloads: true,
+  scanBeforeDownload: true,
+  scanAfterDownload: true,
   theme: 'light',
   language: 'en',
   enableClipboardWatch: true,
@@ -84,25 +101,22 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
       if (typeof window !== 'undefined' && window.electron) {
         const response = await window.electron.settings.getAll();
+        console.log('[SettingsStore] Load settings response:', response);
 
         if (response.success && response.settings) {
           const settings = response.settings;
+          console.log('[SettingsStore] Loaded settings keys:', Object.keys(settings));
+          console.log('[SettingsStore] Security settings:', {
+            virusTotalApiKey: settings.virusTotalApiKey ? '***' : 'empty',
+            enableVirusScan: settings.enableVirusScan,
+            autoScanDownloads: settings.autoScanDownloads,
+            scanBeforeDownload: settings.scanBeforeDownload,
+            scanAfterDownload: settings.scanAfterDownload
+          });
 
+          // electron-store returns typed values directly, no need for string conversion
           set({
-            defaultDirectory: settings.defaultDirectory || DEFAULT_SETTINGS.defaultDirectory,
-            maxConcurrentDownloads: parseInt(settings.maxConcurrentDownloads) || DEFAULT_SETTINGS.maxConcurrentDownloads,
-            segmentsPerDownload: parseInt(settings.segmentsPerDownload) || DEFAULT_SETTINGS.segmentsPerDownload,
-            enableSpeedLimit: settings.enableSpeedLimit === 'true',
-            globalSpeedLimit: parseInt(settings.globalSpeedLimit) || DEFAULT_SETTINGS.globalSpeedLimit,
-            enableAutoCategorization: settings.enableAutoCategorization !== 'false',
-            enableSmartNaming: settings.enableSmartNaming !== 'false',
-            enableAutoTagging: settings.enableAutoTagging !== 'false',
-            theme: (settings.theme as 'light' | 'dark') || DEFAULT_SETTINGS.theme,
-            language: settings.language || DEFAULT_SETTINGS.language,
-            enableClipboardWatch: settings.enableClipboardWatch !== 'false',
-            enableSystemTray: settings.enableSystemTray !== 'false',
-            enableNotifications: settings.enableNotifications !== 'false',
-            notificationSound: settings.notificationSound !== 'false',
+            ...settings,
             hasUnsavedChanges: false,
           });
         } else {
@@ -119,8 +133,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   saveSetting: async (key: keyof AppSettings, value: any) => {
     try {
       if (typeof window !== 'undefined' && window.electron) {
-        const stringValue = typeof value === 'boolean' ? value.toString() : String(value);
-        const response = await window.electron.settings.set(key, stringValue);
+        // electron-store handles types automatically, no need for string conversion
+        const response = await window.electron.settings.set(key, value);
 
         if (response.success) {
           set({ hasUnsavedChanges: false });
@@ -145,30 +159,49 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       set({ isLoading: true, error: null });
 
       const state = get();
-      const settings: Record<string, string> = {
-        defaultDirectory: state.defaultDirectory,
-        maxConcurrentDownloads: state.maxConcurrentDownloads.toString(),
-        segmentsPerDownload: state.segmentsPerDownload.toString(),
-        enableSpeedLimit: state.enableSpeedLimit.toString(),
-        globalSpeedLimit: state.globalSpeedLimit.toString(),
-        enableAutoCategorization: state.enableAutoCategorization.toString(),
-        enableSmartNaming: state.enableSmartNaming.toString(),
-        enableAutoTagging: state.enableAutoTagging.toString(),
-        theme: state.theme,
-        language: state.language,
-        enableClipboardWatch: state.enableClipboardWatch.toString(),
-        enableSystemTray: state.enableSystemTray.toString(),
-        enableNotifications: state.enableNotifications.toString(),
-        notificationSound: state.notificationSound.toString(),
-      };
+      console.log('[SettingsStore] Saving settings, security values:', {
+        virusTotalApiKey: state.virusTotalApiKey ? '***' : 'empty',
+        enableVirusScan: state.enableVirusScan,
+        autoScanDownloads: state.autoScanDownloads,
+        scanBeforeDownload: state.scanBeforeDownload,
+        scanAfterDownload: state.scanAfterDownload
+      });
 
       if (typeof window !== 'undefined' && window.electron) {
-        for (const [key, value] of Object.entries(settings)) {
-          const response = await window.electron.settings.set(key, value);
+        console.log('[SettingsStore] Saving all settings');
+        
+        // electron-store handles all types automatically
+        const settingsToSave = {
+          defaultDirectory: state.defaultDirectory,
+          maxConcurrentDownloads: state.maxConcurrentDownloads,
+          segmentsPerDownload: state.segmentsPerDownload,
+          enableSpeedLimit: state.enableSpeedLimit,
+          globalSpeedLimit: state.globalSpeedLimit,
+          enableAutoCategorization: state.enableAutoCategorization,
+          enableSmartNaming: state.enableSmartNaming,
+          enableAutoTagging: state.enableAutoTagging,
+          virusTotalApiKey: state.virusTotalApiKey,
+          enableVirusScan: state.enableVirusScan,
+          autoScanDownloads: state.autoScanDownloads,
+          scanBeforeDownload: state.scanBeforeDownload,
+          scanAfterDownload: state.scanAfterDownload,
+          theme: state.theme,
+          language: state.language,
+          enableClipboardWatch: state.enableClipboardWatch,
+          enableSystemTray: state.enableSystemTray,
+          enableNotifications: state.enableNotifications,
+          notificationSound: state.notificationSound,
+        };
+
+        for (const [key, value] of Object.entries(settingsToSave)) {
+          const response = await window.electron.settings.set(key, value as any);
           if (!response.success) {
+            console.error(`[SettingsStore] Failed to save ${key}:`, response.error);
             throw new Error(`Failed to save ${key}: ${response.error}`);
           }
         }
+
+        console.log('[SettingsStore] All settings saved successfully');
 
         // Apply special settings
         await window.electron.settings.setMaxConcurrent(state.maxConcurrentDownloads);
@@ -223,6 +256,26 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   setEnableAutoTagging: (enabled: boolean) => {
     set({ enableAutoTagging: enabled, hasUnsavedChanges: true });
+  },
+
+  setVirusTotalApiKey: (apiKey: string) => {
+    set({ virusTotalApiKey: apiKey, hasUnsavedChanges: true });
+  },
+
+  setEnableVirusScan: (enabled: boolean) => {
+    set({ enableVirusScan: enabled, hasUnsavedChanges: true });
+  },
+
+  setAutoScanDownloads: (enabled: boolean) => {
+    set({ autoScanDownloads: enabled, hasUnsavedChanges: true });
+  },
+
+  setScanBeforeDownload: (enabled: boolean) => {
+    set({ scanBeforeDownload: enabled, hasUnsavedChanges: true });
+  },
+
+  setScanAfterDownload: (enabled: boolean) => {
+    set({ scanAfterDownload: enabled, hasUnsavedChanges: true });
   },
 
   setTheme: (theme: 'light' | 'dark') => {

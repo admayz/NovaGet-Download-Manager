@@ -175,13 +175,13 @@ const electronAPI = {
 
   // Settings operations
   settings: {
-    get: (key: string): Promise<IPCResponse<{ value: string | null }>> =>
+    get: (key: string): Promise<IPCResponse<{ value: any }>> =>
       ipcRenderer.invoke('settings:get', key),
 
-    set: (key: string, value: string): Promise<IPCResponse> =>
+    set: (key: string, value: any): Promise<IPCResponse> =>
       ipcRenderer.invoke('settings:set', key, value),
 
-    getAll: (): Promise<IPCResponse<{ settings: Record<string, string> }>> =>
+    getAll: (): Promise<IPCResponse<{ settings: Record<string, any> }>> =>
       ipcRenderer.invoke('settings:getAll'),
 
     setMaxConcurrent: (max: number): Promise<IPCResponse> =>
@@ -252,6 +252,21 @@ const electronAPI = {
 
     info: (context: string, data: any): Promise<void> =>
       ipcRenderer.invoke('logger:info', context, data),
+  },
+
+  // i18n operations
+  i18n: {
+    setLanguage: (languageCode: string): Promise<IPCResponse> =>
+      ipcRenderer.invoke('i18n:setLanguage', languageCode),
+
+    getLanguage: (): Promise<IPCResponse<{ language: string }>> =>
+      ipcRenderer.invoke('i18n:getLanguage'),
+
+    translate: (key: string, params?: Record<string, string>): Promise<IPCResponse<{ translation: string }>> =>
+      ipcRenderer.invoke('i18n:translate', key, params),
+
+    getSupportedLanguages: (): Promise<IPCResponse<{ languages: Array<{ code: string; name: string; nativeName: string }> }>> =>
+      ipcRenderer.invoke('i18n:getSupportedLanguages'),
   },
 };
 

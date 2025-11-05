@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useMemo } from 'react';
+import { useTranslation } from '@/hooks/useTranslation';
 import { DownloadRecord, Statistics } from '@/types/electron';
 import { formatBytes, formatSpeed } from '@/lib/formatters';
 import { MagnifyingGlassIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
@@ -8,6 +9,7 @@ import { MagnifyingGlassIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outl
 type TimeRange = 'daily' | 'weekly' | 'monthly';
 
 export default function HistoryPage() {
+  const { t } = useTranslation();
   const [downloads, setDownloads] = useState<DownloadRecord[]>([]);
   const [statistics, setStatistics] = useState<Statistics | null>(null);
   const [categoryStats, setCategoryStats] = useState<Record<string, { count: number; totalBytes: number }>>({});
@@ -17,6 +19,26 @@ export default function HistoryPage() {
 
   useEffect(() => {
     loadData();
+    
+    // Reload data every 3 seconds for faster updates
+    const interval = setInterval(() => {
+      console.log('[History] Interval triggered - reloading data');
+      loadData();
+    }, 3000);
+    
+    // Listen for download completion events to refresh immediately
+    let unsubscribe: (() => void) | undefined;
+    if (typeof window !== 'undefined' && window.electron) {
+      unsubscribe = window.electron.download.onComplete(() => {
+        console.log('[History] Download completed - reloading data');
+        loadData();
+      });
+    }
+    
+    return () => {
+      clearInterval(interval);
+      if (unsubscribe) unsubscribe();
+    };
   }, []);
 
   const loadData = async () => {
@@ -26,12 +48,14 @@ export default function HistoryPage() {
       if (typeof window !== 'undefined' && window.electron) {
         // Load all downloads
         const downloadsResponse = await window.electron.db.getAllDownloads();
+        console.log('[History] Downloads loaded:', downloadsResponse.downloads?.length);
         if (downloadsResponse.success && downloadsResponse.downloads) {
           setDownloads(downloadsResponse.downloads);
         }
 
         // Load statistics
         const statsResponse = await window.electron.stats.get();
+        console.log('[History] Stats loaded:', statsResponse.stats);
         if (statsResponse.success && statsResponse.stats) {
           setStatistics(statsResponse.stats);
         }
@@ -144,37 +168,37 @@ export default function HistoryPage() {
   return (
     <div className="p-8">
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 dark:text-white">History</h1>
+        <h1 className="text-3xl font-bold text-gray-900 dark:text-white">{t('history.title')}</h1>
         <p className="text-gray-600 dark:text-gray-400 mt-2">
-          View your download history and statistics
+          {t('history.subtitle')}
         </p>
       </div>
 
       {/* Statistics Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-          <p className="text-sm text-gray-600 dark:text-gray-400">Total Downloads</p>
+          <p className="text-sm text-gray-600 dark:text-gray-400">{t('dashboard.totalDownloads')}</p>
           <p className="text-3xl font-bold text-gray-900 dark:text-white mt-2">
             {statistics?.totalDownloads || 0}
           </p>
         </div>
 
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-          <p className="text-sm text-gray-600 dark:text-gray-400">Total Data</p>
+          <p className="text-sm text-gray-600 dark:text-gray-400">{t('dashboard.totalDataDownloaded')}</p>
           <p className="text-3xl font-bold text-gray-900 dark:text-white mt-2">
             {formatBytes(statistics?.totalBytes || 0)}
           </p>
         </div>
 
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-          <p className="text-sm text-gray-600 dark:text-gray-400">Average Speed</p>
+          <p className="text-sm text-gray-600 dark:text-gray-400">{t('dashboard.averageSpeed')}</p>
           <p className="text-3xl font-bold text-gray-900 dark:text-white mt-2">
             {formatSpeed(statistics?.averageSpeed || 0)}
           </p>
         </div>
 
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-          <p className="text-sm text-gray-600 dark:text-gray-400">Success Rate</p>
+          <p className="text-sm text-gray-600 dark:text-gray-400">{t('history.statistics')}</p>
           <p className="text-3xl font-bold text-gray-900 dark:text-white mt-2">
             {successRate}%
           </p>
@@ -185,7 +209,7 @@ export default function HistoryPage() {
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow mb-8">
         <div className="p-6 border-b border-gray-200 dark:border-gray-700">
           <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
-            Statistics Dashboard
+            {t('history.statistics')}
           </h2>
           
           {/* Time Range Selector */}
@@ -198,7 +222,7 @@ export default function HistoryPage() {
                   : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
               }`}
             >
-              Daily
+              {t('history.daily')}
             </button>
             <button
               onClick={() => setTimeRange('weekly')}
@@ -208,7 +232,7 @@ export default function HistoryPage() {
                   : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
               }`}
             >
-              Weekly
+              {t('history.weekly')}
             </button>
             <button
               onClick={() => setTimeRange('monthly')}
@@ -218,7 +242,7 @@ export default function HistoryPage() {
                   : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
               }`}
             >
-              Monthly
+              {t('history.monthly')}
             </button>
           </div>
 
@@ -241,7 +265,7 @@ export default function HistoryPage() {
           {/* Category Breakdown */}
           <div>
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">
-              Category Breakdown
+              {t('history.categoryBreakdown')}
             </h3>
             {Object.keys(categoryStats).length > 0 ? (
               <div className="space-y-3">
@@ -288,14 +312,14 @@ export default function HistoryPage() {
         <div className="p-6 border-b border-gray-200 dark:border-gray-700">
           <div className="flex items-center justify-between">
             <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
-              Completed Downloads
+              {t('history.completedDownloads')}
             </h2>
             <div className="flex gap-2">
               <div className="relative">
                 <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
                 <input
                   type="search"
-                  placeholder="Search..."
+                  placeholder={t('common.search')}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
@@ -307,7 +331,7 @@ export default function HistoryPage() {
                 className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition-colors"
               >
                 <ArrowDownTrayIcon className="w-4 h-4" />
-                Export CSV
+                {t('history.exportCSV')}
               </button>
             </div>
           </div>
@@ -317,7 +341,7 @@ export default function HistoryPage() {
           {isLoading ? (
             <div className="text-center py-12 text-gray-500 dark:text-gray-400">
               <div className="text-4xl mb-4">⏳</div>
-              <p className="text-lg">Loading history...</p>
+              <p className="text-lg">{t('common.loading')}</p>
             </div>
           ) : filteredDownloads.length > 0 ? (
             <div className="space-y-3">
@@ -357,12 +381,12 @@ export default function HistoryPage() {
             <div className="text-center py-12 text-gray-500 dark:text-gray-400">
               <div className="text-6xl mb-4">📜</div>
               <p className="text-lg">
-                {searchQuery ? 'No downloads found' : 'No history yet'}
+                {searchQuery ? t('download.noDownloads') : t('history.noHistory')}
               </p>
               <p className="text-sm mt-2">
                 {searchQuery
-                  ? 'Try a different search term'
-                  : 'Your completed downloads will appear here'}
+                  ? t('download.noDownloadsMessage')
+                  : t('history.noHistoryMessage')}
               </p>
             </div>
           )}

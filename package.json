@@ -1,15 +1,16 @@
 {
-  "name": "novaget",
-  "version": "1.0.0",
+  "name": "NovaGet-Download-Manager",
+  "version": "0.0.1",
   "description": "Modern download manager with AI-powered features",
   "main": "dist/index.js",
   "scripts": {
     "dev": "concurrently \"npm run dev:next\" \"npm run dev:electron\"",
     "dev:next": "next dev",
     "dev:electron": "cross-env NODE_ENV=development tsc -p tsconfig.electron.json && cross-env NODE_ENV=development electron .",
-    "build": "npm run build:next && npm run build:electron",
+    "build": "npm run build:next && npm run build:electron && npm run copy:assets",
     "build:next": "next build",
     "build:electron": "tsc -p tsconfig.electron.json",
+    "copy:assets": "node scripts/copy-assets.js",
     "start": "electron .",
     "package:win": "electron-builder --win",
     "package:mac": "electron-builder --mac",
@@ -30,6 +31,7 @@
     "@heroicons/react": "^2.2.0",
     "axios": "^1.6.2",
     "better-sqlite3": "^12.4.1",
+    "electron-store": "^8.2.0",
     "electron-updater": "^6.1.7",
     "next": "^15.0.0",
     "react": "^19.0.0",
@@ -69,23 +71,27 @@
     "files": [
       "dist/**/*",
       "out/**/*",
+      "locales/**/*",
       "package.json"
     ],
     "win": {
       "target": [
         "nsis"
-      ]
+      ],
+      "icon": "electron/assets/icon.ico"
     },
     "mac": {
       "target": [
         "dmg"
-      ]
+      ],
+      "icon": "electron/assets/icon.icns"
     },
     "linux": {
       "target": [
         "AppImage",
         "deb"
-      ]
+      ],
+      "icon": "electron/assets/icon.png"
     }
   }
 }

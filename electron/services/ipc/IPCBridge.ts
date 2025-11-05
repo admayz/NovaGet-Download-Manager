@@ -4,8 +4,10 @@ import { DatabaseService } from '../database/DatabaseService';
 import { DownloadOptions, DownloadProgress } from '../download/Download';
 import { ClipboardWatcher } from '../clipboard/ClipboardWatcher';
 import { LoggerService } from '../logger/LoggerService';
+import { i18nService } from '../i18n/i18nService';
 import { URLValidator } from '../../utils/urlValidator';
 import { PathSanitizer } from '../../utils/pathSanitizer';
+import { SettingsStore } from '../settings/SettingsStore';
 
 /**
  * IPCBridge handles communication between main and renderer processes
@@ -16,10 +18,20 @@ export class IPCBridge {
   private db: DatabaseService;
   private clipboardWatcher?: ClipboardWatcher;
   private logger: LoggerService;
+  private i18n: i18nService;
+  private settingsStore: SettingsStore;
 
-  constructor(downloadManager: DownloadManager, db: DatabaseService, clipboardWatcher?: ClipboardWatcher) {
+  constructor(
+    downloadManager: DownloadManager, 
+    db: DatabaseService, 
+    i18n: i18nService, 
+    settingsStore: SettingsStore,
+    clipboardWatcher?: ClipboardWatcher
+  ) {
     this.downloadManager = downloadManager;
     this.db = db;
+    this.i18n = i18n;
+    this.settingsStore = settingsStore;
     this.clipboardWatcher = clipboardWatcher;
     this.logger = new LoggerService();
     this.registerHandlers();
@@ -96,8 +108,40 @@ export class IPCBridge {
 
     ipcMain.handle('download:getAll', async () => {
       try {
-        const downloads = this.downloadManager.getAllDownloads();
-        return { success: true, downloads };
+        // Get downloads from memory (active downloads)
+        const activeDownloads = this.downloadManager.getAllDownloads();
+        
+        // Get all downloads from database (includes paused/completed)
+        const dbDownloads = this.db.getAllDownloads();
+        
+        // Create a map of active downloads by ID for quick lookup
+        const activeMap = new Map(activeDownloads.map(d => [d.downloadId, d]));
+        
+        // Merge: prioritize active downloads, add missing ones from DB
+        const allDownloads = [...activeDownloads];
+        
+        for (const dbDownload of dbDownloads) {
+          if (!activeMap.has(dbDownload.id)) {
+            // Convert DB record to DownloadProgress format
+            allDownloads.push({
+              downloadId: dbDownload.id,
+              url: dbDownload.url,
+              filename: dbDownload.filename,
+              totalBytes: dbDownload.total_bytes,
+              downloadedBytes: dbDownload.downloaded_bytes,
+              speed: 0,
+              percentage: dbDownload.total_bytes > 0 
+                ? (dbDownload.downloaded_bytes / dbDownload.total_bytes) * 100 
+                : 0,
+              remainingTime: 0,
+              status: dbDownload.status as any,
+              segments: [],
+              error: dbDownload.error_message || undefined,
+            });
+          }
+        }
+        
+        return { success: true, downloads: allDownloads };
       } catch (error) {
         return { success: false, error: (error as Error).message };
       }
@@ -151,16 +195,16 @@ export class IPCBridge {
     // Settings operations
     ipcMain.handle('settings:get', async (_event, key: string) => {
       try {
-        const value = this.db.getSetting(key);
+        const value = this.settingsStore.get(key as any);
         return { success: true, value };
       } catch (error) {
         return { success: false, error: (error as Error).message };
       }
     });
 
-    ipcMain.handle('settings:set', async (_event, key: string, value: string) => {
+    ipcMain.handle('settings:set', async (_event, key: string, value: any) => {
       try {
-        this.db.setSetting(key, value);
+        this.settingsStore.set(key as any, value);
         return { success: true };
       } catch (error) {
         return { success: false, error: (error as Error).message };
@@ -169,7 +213,7 @@ export class IPCBridge {
 
     ipcMain.handle('settings:getAll', async () => {
       try {
-        const settings = this.db.getAllSettings();
+        const settings = this.settingsStore.getAll();
         return { success: true, settings };
       } catch (error) {
         return { success: false, error: (error as Error).message };
@@ -362,6 +406,45 @@ export class IPCBridge {
         console.error('Failed to log info:', error);
       }
     });
+
+    // i18n operations
+    ipcMain.handle('i18n:setLanguage', async (_event, languageCode: string) => {
+      try {
+        this.i18n.setLanguage(languageCode);
+        // Save language preference to settings store
+        this.settingsStore.set('language', languageCode);
+        return { success: true };
+      } catch (error) {
+        return { success: false, error: (error as Error).message };
+      }
+    });
+
+    ipcMain.handle('i18n:getLanguage', async () => {
+      try {
+        const language = this.i18n.getLanguage();
+        return { success: true, language };
+      } catch (error) {
+        return { success: false, error: (error as Error).message };
+      }
+    });
+
+    ipcMain.handle('i18n:translate', async (_event, key: string, params?: Record<string, string>) => {
+      try {
+        const translation = this.i18n.translate(key, params);
+        return { success: true, translation };
+      } catch (error) {
+        return { success: false, error: (error as Error).message };
+      }
+    });
+
+    ipcMain.handle('i18n:getSupportedLanguages', async () => {
+      try {
+        const languages = this.i18n.getSupportedLanguages();
+        return { success: true, languages };
+      } catch (error) {
+        return { success: false, error: (error as Error).message };
+      }
+    });
   }
 
   /**
@@ -457,5 +540,9 @@ export class IPCBridge {
     ipcMain.removeHandler('logger:error');
     ipcMain.removeHandler('logger:warn');
     ipcMain.removeHandler('logger:info');
+    ipcMain.removeHandler('i18n:setLanguage');
+    ipcMain.removeHandler('i18n:getLanguage');
+    ipcMain.removeHandler('i18n:translate');
+    ipcMain.removeHandler('i18n:getSupportedLanguages');
   }
 }

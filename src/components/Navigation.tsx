@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { memo } from 'react';
 import ThemeToggle from './ThemeToggle';
 import { useDownloadStore } from '@/store/downloadStore';
+import { useTranslation } from '@/hooks/useTranslation';
 import {
   ChartBarIcon,
   ArrowDownTrayIcon,
@@ -13,16 +14,17 @@ import {
 } from '@heroicons/react/24/outline';
 
 const navItems = [
-  { href: '/', label: 'Dashboard', icon: ChartBarIcon, gradient: 'from-purple-500 to-indigo-600', showBadge: false },
-  { href: '/downloads', label: 'Downloads', icon: ArrowDownTrayIcon, gradient: 'from-blue-500 to-cyan-600', showBadge: true },
-  { href: '/history', label: 'History', icon: ClockIcon, gradient: 'from-amber-500 to-orange-600', showBadge: false },
-  { href: '/settings', label: 'Settings', icon: Cog6ToothIcon, gradient: 'from-gray-500 to-slate-600', showBadge: false },
+  { href: '/', labelKey: 'navigation.dashboard', icon: ChartBarIcon, gradient: 'from-purple-500 to-indigo-600', showBadge: false },
+  { href: '/downloads', labelKey: 'navigation.downloads', icon: ArrowDownTrayIcon, gradient: 'from-blue-500 to-cyan-600', showBadge: true },
+  { href: '/history', labelKey: 'navigation.history', icon: ClockIcon, gradient: 'from-amber-500 to-orange-600', showBadge: false },
+  { href: '/settings', labelKey: 'navigation.settings', icon: Cog6ToothIcon, gradient: 'from-gray-500 to-slate-600', showBadge: false },
 ] as const;
 
 function Navigation() {
   const pathname = usePathname();
   const { getActiveDownloads } = useDownloadStore();
   const activeDownloadsCount = getActiveDownloads().length;
+  const { t } = useTranslation();
 
   return (
     <nav className="w-64 bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 flex flex-col shadow-2xl">
@@ -44,13 +46,13 @@ function Navigation() {
               </div>
               <div>
                 <h1 className="text-2xl font-bold bg-gradient-to-r from-purple-400 via-indigo-400 to-blue-400 bg-clip-text text-transparent animate-gradient">
-                  NovaGet
+                  {t('navigation.appName')}
                 </h1>
               </div>
             </div>
             <ThemeToggle />
           </div>
-          <p className="text-sm text-gray-400 dark:text-gray-500 ml-13">Download Manager</p>
+          <p className="text-sm text-gray-400 dark:text-gray-500 ml-13">{t('navigation.appSubtitle')}</p>
         </div>
       </div>
 
@@ -111,7 +113,7 @@ function Navigation() {
                       : 'text-gray-400 group-hover:text-gray-200'
                   }`}
                 >
-                  {item.label}
+                  {t(item.labelKey)}
                 </span>
 
                 {/* Badge for active downloads */}
@@ -155,22 +157,11 @@ function Navigation() {
               N
             </div>
             <div className="text-xs">
-              <div className="text-gray-300 font-semibold">NovaGet</div>
-              <div className="text-gray-500 flex items-center gap-1">
-                <span>v1.0.0</span>
-                <span className="text-gray-600">•</span>
-                <span className="text-green-400">Pro</span>
+              <div className="text-gray-300 font-semibold">{t('navigation.appName')}</div>
+              <div className="text-gray-500">
+                <span>{t('navigation.version', { version: '1.0.0' })}</span>
               </div>
             </div>
-          </div>
-          
-          {/* Status indicator with better styling */}
-          <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-green-500/10 border border-green-500/20">
-            <div className="relative">
-              <div className="w-2 h-2 rounded-full bg-green-500 shadow-lg shadow-green-500/50"></div>
-              <div className="absolute inset-0 w-2 h-2 rounded-full bg-green-500 animate-ping"></div>
-            </div>
-            <span className="text-xs text-green-400 font-medium">Online</span>
           </div>
         </div>
       </div>

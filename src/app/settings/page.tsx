@@ -2,11 +2,58 @@
 
 import { useEffect, useState } from 'react';
 import { useSettingsStore } from '@/store/settingsStore';
+import { useTranslation } from '@/hooks/useTranslation';
 import SettingsSection from '@/components/settings/SettingsSection';
 import ToggleSwitch from '@/components/settings/ToggleSwitch';
 import SliderInput from '@/components/settings/SliderInput';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
+
+// Language Selector Component
+function LanguageSelector() {
+  const { language, getSupportedLanguages, changeLanguage, isInitialized } = useTranslation();
+  const supportedLanguages = getSupportedLanguages();
+
+  if (!isInitialized || supportedLanguages.length === 0) {
+    return (
+      <div>
+        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+          Language
+        </label>
+        <select
+          disabled
+          className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white opacity-50 cursor-not-allowed"
+        >
+          <option>Loading...</option>
+        </select>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+        Language
+      </label>
+      <select
+        value={language}
+        onChange={(e) => changeLanguage(e.target.value)}
+        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+      >
+        {supportedLanguages.map((lang) => (
+          <option key={lang.code} value={lang.code}>
+            {lang.nativeName} ({lang.name})
+          </option>
+        ))}
+      </select>
+      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+        The application will reload when you change the language
+      </p>
+    </div>
+  );
+}
 
 export default function SettingsPage() {
+  const { t } = useTranslation();
   const {
     // General settings
     defaultDirectory,
@@ -29,6 +76,18 @@ export default function SettingsPage() {
     setEnableAutoCategorization,
     setEnableSmartNaming,
     setEnableAutoTagging,
+
+    // Security settings
+    virusTotalApiKey,
+    enableVirusScan,
+    autoScanDownloads,
+    scanBeforeDownload,
+    scanAfterDownload,
+    setVirusTotalApiKey,
+    setEnableVirusScan,
+    setAutoScanDownloads,
+    setScanBeforeDownload,
+    setScanAfterDownload,
 
     // Appearance settings
     theme,
@@ -54,6 +113,7 @@ export default function SettingsPage() {
   } = useSettingsStore();
 
   const [isMounted, setIsMounted] = useState(false);
+  const [showResetDialog, setShowResetDialog] = useState(false);
 
   useEffect(() => {
     setIsMounted(true);
@@ -73,10 +133,8 @@ export default function SettingsPage() {
     await saveAllSettings();
   };
 
-  const handleResetToDefaults = async () => {
-    if (confirm('Are you sure you want to reset all settings to defaults?')) {
-      await resetToDefaults();
-    }
+  const handleResetToDefaults = () => {
+    setShowResetDialog(true);
   };
 
   const formatSpeedLimit = (bytesPerSecond: number): string => {
@@ -92,9 +150,9 @@ export default function SettingsPage() {
   return (
     <div className="p-8">
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Settings</h1>
+        <h1 className="text-3xl font-bold text-gray-900 dark:text-white">{t('settings.title')}</h1>
         <p className="text-gray-600 dark:text-gray-400 mt-2">
-          Configure NovaGet to your preferences
+          {t('settings.subtitle')}
         </p>
       </div>
 
@@ -107,17 +165,17 @@ export default function SettingsPage() {
       <div className="space-y-6">
         {/* General Settings */}
         <SettingsSection
-          title="General Settings"
-          description="Configure basic download behavior"
+          title={t('settings.general')}
+          description={t('settings.subtitle')}
         >
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Default Download Directory
+              {t('settings.downloadPath')}
             </label>
             <div className="flex gap-2">
               <input
                 type="text"
-                value={defaultDirectory || 'Not set'}
+                value={defaultDirectory || t('settings.selectDownloadPath')}
                 readOnly
                 className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white"
               />
@@ -125,13 +183,13 @@ export default function SettingsPage() {
                 onClick={handleBrowseDirectory}
                 className="px-4 py-2 bg-primary-600 text-white rounded-lg font-medium hover:bg-primary-700 transition-colors"
               >
-                Browse
+                {t('download.form.selectDirectory')}
               </button>
             </div>
           </div>
 
           <SliderInput
-            label="Max Concurrent Downloads"
+            label={t('settings.maxConcurrentDownloads')}
             value={maxConcurrentDownloads}
             min={1}
             max={10}
@@ -139,7 +197,7 @@ export default function SettingsPage() {
           />
 
           <SliderInput
-            label="Segments per Download"
+            label={t('settings.segmentsPerDownload')}
             value={segmentsPerDownload}
             min={1}
             max={16}
@@ -149,20 +207,20 @@ export default function SettingsPage() {
 
         {/* Speed Settings */}
         <SettingsSection
-          title="Speed Settings"
-          description="Control download speed limits"
+          title={t('settings.speed')}
+          description={t('settings.globalSpeedLimit')}
         >
           <ToggleSwitch
             enabled={enableSpeedLimit}
             onChange={setEnableSpeedLimit}
-            label="Enable Speed Limiting"
-            description="Limit download speed globally"
+            label={t('settings.enableSpeedLimit')}
+            description={t('settings.disableSpeedLimit')}
           />
 
           {enableSpeedLimit && (
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                Global Speed Limit: {formatSpeedLimit(globalSpeedLimit)}
+                {t('settings.speedLimitValue')}: {formatSpeedLimit(globalSpeedLimit)}
               </label>
               <input
                 type="number"
@@ -171,10 +229,10 @@ export default function SettingsPage() {
                 value={(globalSpeedLimit / (1024 * 1024)).toFixed(1)}
                 onChange={(e) => setGlobalSpeedLimit(Math.round(parseFloat(e.target.value) * 1024 * 1024))}
                 className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                placeholder="Enter speed limit in MB/s (0 for unlimited)"
+                placeholder={t('download.form.speedLimitPlaceholder')}
               />
               <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                Enter 0 for unlimited speed
+                {t('settings.disableSpeedLimit')}
               </p>
             </div>
           )}
@@ -182,39 +240,115 @@ export default function SettingsPage() {
 
         {/* AI Settings */}
         <SettingsSection
-          title="AI Features"
-          description="Configure AI-powered features using Pollinations.ai"
+          title={t('settings.ai')}
+          description={t('settings.aiFeatures')}
         >
           <ToggleSwitch
             enabled={enableAutoCategorization}
             onChange={setEnableAutoCategorization}
-            label="Auto Categorization"
-            description="Automatically categorize downloads by file type"
+            label={t('settings.enableAutoCategorization')}
+            description={t('settings.enableAutoCategorization')}
           />
 
           <ToggleSwitch
             enabled={enableSmartNaming}
             onChange={setEnableSmartNaming}
-            label="Smart Naming"
-            description="Suggest better file names using AI"
+            label={t('settings.enableSmartNaming')}
+            description={t('settings.enableSmartNaming')}
           />
 
           <ToggleSwitch
             enabled={enableAutoTagging}
             onChange={setEnableAutoTagging}
-            label="Auto Tagging"
-            description="Automatically generate tags for downloads"
+            label={t('settings.enableAutoTagging')}
+            description={t('settings.enableAutoTagging')}
           />
+        </SettingsSection>
+
+        {/* Security Settings */}
+        <SettingsSection
+          title={t('settings.security')}
+          description={t('settings.securitySubtitle')}
+        >
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              {t('settings.virusTotalApiKey')}
+            </label>
+            <input
+              type="password"
+              value={virusTotalApiKey}
+              onChange={(e) => setVirusTotalApiKey(e.target.value)}
+              placeholder={t('settings.virusTotalApiKeyPlaceholder')}
+              className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+            />
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+              {t('settings.virusTotalApiKeyHelp')}{' '}
+              <a
+                href="https://www.virustotal.com/gui/my-apikey"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary-600 hover:text-primary-700 underline"
+              >
+                {t('settings.virusTotalApiKeyHelpLink')}
+              </a>
+              {' '}{t('settings.virusTotalFreeTier')}
+            </p>
+          </div>
+
+          <ToggleSwitch
+            enabled={enableVirusScan}
+            onChange={setEnableVirusScan}
+            label={t('settings.enableVirusScan')}
+            description={t('settings.enableVirusScanDesc')}
+          />
+
+          {enableVirusScan && (
+            <>
+              <ToggleSwitch
+                enabled={autoScanDownloads}
+                onChange={setAutoScanDownloads}
+                label={t('settings.autoScanDownloads')}
+                description={t('settings.autoScanDownloadsDesc')}
+              />
+
+              <ToggleSwitch
+                enabled={scanBeforeDownload}
+                onChange={setScanBeforeDownload}
+                label={t('settings.scanBeforeDownload')}
+                description={t('settings.scanBeforeDownloadDesc')}
+              />
+
+              <ToggleSwitch
+                enabled={scanAfterDownload}
+                onChange={setScanAfterDownload}
+                label={t('settings.scanAfterDownload')}
+                description={t('settings.scanAfterDownloadDesc')}
+              />
+
+              <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                <h4 className="text-sm font-medium text-blue-900 dark:text-blue-100 mb-2">
+                  {t('settings.securityScanInfo')}
+                </h4>
+                <ul className="text-xs text-blue-800 dark:text-blue-200 space-y-1">
+                  <li>• {t('settings.securityScanInfoItems.preDownload')}</li>
+                  <li>• {t('settings.securityScanInfoItems.postDownload')}</li>
+                  <li>• {t('settings.securityScanInfoItems.threatWarning')}</li>
+                  <li>• {t('settings.securityScanInfoItems.quarantine')}</li>
+                  <li>• {t('settings.securityScanInfoItems.rateLimit')}</li>
+                </ul>
+              </div>
+            </>
+          )}
         </SettingsSection>
 
         {/* Appearance Settings */}
         <SettingsSection
-          title="Appearance"
-          description="Customize the look and feel"
+          title={t('settings.appearance')}
+          description={t('settings.appearance')}
         >
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Theme
+              {t('settings.theme')}
             </label>
             <div className="flex gap-2">
               <button
@@ -225,7 +359,7 @@ export default function SettingsPage() {
                     : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
                 }`}
               >
-                Light
+                {t('settings.themeLight')}
               </button>
               <button
                 onClick={() => setTheme('dark')}
@@ -235,58 +369,45 @@ export default function SettingsPage() {
                     : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
                 }`}
               >
-                Dark
+                {t('settings.themeDark')}
               </button>
             </div>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Language
-            </label>
-            <select
-              disabled
-              className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white opacity-50 cursor-not-allowed"
-            >
-              <option>English (Coming Soon)</option>
-            </select>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-              Multi-language support coming in a future update
-            </p>
-          </div>
+          <LanguageSelector />
         </SettingsSection>
 
         {/* Advanced Settings */}
         <SettingsSection
-          title="Advanced"
-          description="Configure advanced features and behavior"
+          title={t('settings.advanced')}
+          description={t('settings.advanced')}
         >
           <ToggleSwitch
             enabled={enableClipboardWatch}
             onChange={setEnableClipboardWatch}
-            label="Clipboard Watching"
-            description="Automatically detect download URLs in clipboard"
+            label={t('settings.clipboardWatching')}
+            description={t('settings.enableClipboardWatching')}
           />
 
           <ToggleSwitch
             enabled={enableSystemTray}
             onChange={setEnableSystemTray}
-            label="System Tray"
-            description="Minimize to system tray instead of closing"
+            label={t('settings.systemTray')}
+            description={t('settings.minimizeToTray')}
           />
 
           <ToggleSwitch
             enabled={enableNotifications}
             onChange={setEnableNotifications}
-            label="Notifications"
-            description="Show desktop notifications for download events"
+            label={t('settings.notifications')}
+            description={t('settings.enableNotifications')}
           />
 
           <ToggleSwitch
             enabled={notificationSound}
             onChange={setNotificationSound}
-            label="Notification Sound"
-            description="Play sound with notifications"
+            label={t('settings.notifications')}
+            description={t('settings.notificationSound')}
             disabled={!enableNotifications}
           />
         </SettingsSection>
@@ -298,17 +419,31 @@ export default function SettingsPage() {
             disabled={isLoading}
             className="px-6 py-3 bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-white rounded-lg font-medium hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Reset to Defaults
+            {t('settings.resetSettings')}
           </button>
           <button
             onClick={handleSaveChanges}
             disabled={isLoading || !hasUnsavedChanges}
             className="px-6 py-3 bg-primary-600 text-white rounded-lg font-medium hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isLoading ? 'Saving...' : hasUnsavedChanges ? 'Save Changes' : 'Saved'}
+            {isLoading ? t('common.loading') : hasUnsavedChanges ? t('settings.saveSettings') : t('settings.settingsSaved')}
           </button>
         </div>
       </div>
+
+      {/* Reset Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={showResetDialog}
+        onClose={() => setShowResetDialog(false)}
+        onConfirm={async () => {
+          await resetToDefaults();
+        }}
+        title={t('settings.resetSettings')}
+        message={t('settings.confirmResetSettings')}
+        confirmText={t('common.yes')}
+        cancelText={t('common.no')}
+        variant="warning"
+      />
     </div>
   );
 }

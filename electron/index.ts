@@ -9,10 +9,39 @@ import { NotificationManager } from './services/notification/NotificationManager
 import { AppLifecycleManager } from './services/lifecycle/AppLifecycleManager';
 import { SchedulerService } from './services/scheduler/SchedulerService';
 import { ClipboardWatcher } from './services/clipboard/ClipboardWatcher';
+import { i18nService } from './services/i18n/i18nService';
 import { SecurityManager } from './utils/securityConfig';
+import { SettingsStore } from './services/settings/SettingsStore';
+import { AIService } from './services/ai/AIService';
+import { CategoryService } from './services/category/CategoryService';
+import { SecurityCheckService } from './services/security/SecurityCheckService';
+import { VirusTotalService } from './services/virustotal/VirusTotalService';
+
+// Global error handlers
+process.on('uncaughtException', (error) => {
+  // Ignore abort errors from download cancellation
+  if (error.message?.includes('aborted') || error.message?.includes('canceled')) {
+    console.log('[Main] Ignoring expected abort error');
+    return;
+  }
+  console.error('[Main] Uncaught Exception:', error);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  // Ignore abort errors from download cancellation
+  if (reason && typeof reason === 'object' && 'message' in reason) {
+    const message = (reason as any).message;
+    if (message?.includes('aborted') || message?.includes('canceled')) {
+      console.log('[Main] Ignoring expected abort rejection');
+      return;
+    }
+  }
+  console.error('[Main] Unhandled Rejection at:', promise, 'reason:', reason);
+});
 
 // Service instances
 let db: DatabaseService | null = null;
+let settingsStore: SettingsStore | null = null;
 let downloadManager: DownloadManager | null = null;
 let windowManager: WindowManager | null = null;
 let deepLinkHandler: DeepLinkHandler | null = null;
@@ -22,6 +51,11 @@ let lifecycleManager: AppLifecycleManager | null = null;
 let schedulerService: SchedulerService | null = null;
 let clipboardWatcher: ClipboardWatcher | null = null;
 let ipcBridge: IPCBridge | null = null;
+let i18n: i18nService | null = null;
+let aiService: AIService | null = null;
+let categoryService: CategoryService | null = null;
+let virusTotalService: VirusTotalService | null = null;
+let securityCheckService: SecurityCheckService | null = null;
 
 async function initializeServices() {
   console.log('Initializing services...');
@@ -30,6 +64,15 @@ async function initializeServices() {
   const isDevelopment = process.env.NODE_ENV === 'development';
   SecurityManager.initialize(isDevelopment);
   console.log('Security manager initialized');
+
+  // Initialize settings store (electron-store v8 - CommonJS compatible)
+  try {
+    settingsStore = new SettingsStore();
+    console.log('Settings store initialized successfully');
+  } catch (error) {
+    console.error('Failed to initialize settings store:', error);
+    throw error; // Settings are critical, don't continue without them
+  }
 
   // Initialize database
   try {
@@ -42,13 +85,80 @@ async function initializeServices() {
     db = null;
   }
 
+  // Initialize i18n service
+  try {
+    i18n = new i18nService();
+    // Get saved language from settings store or use default
+    const savedLanguage = settingsStore.get('language') || 'tr';
+    await i18n.initialize(savedLanguage);
+    console.log('i18n service initialized with language:', savedLanguage);
+  } catch (error) {
+    console.error('Failed to initialize i18n service:', error);
+    // Create a fallback i18n instance
+    i18n = new i18nService();
+    await i18n.initialize('tr');
+  }
+
   // Initialize window manager
   windowManager = new WindowManager();
 
+  // Initialize AI service
+  try {
+    aiService = new AIService({
+      apiUrl: 'https://text.pollinations.ai/openai',
+      timeout: 10000,
+      maxRetries: 2,
+    });
+    console.log('AI service initialized');
+  } catch (error) {
+    console.error('Failed to initialize AI service:', error);
+  }
+
+  // Initialize category service
+  if (aiService) {
+    categoryService = new CategoryService(aiService);
+    console.log('Category service initialized');
+  }
+
+  // Initialize VirusTotal service
+  if (db && settingsStore) {
+    try {
+      const apiKey = settingsStore.get('virusTotalApiKey') || '';
+      const enableVirusScan = settingsStore.get('enableVirusScan') || false;
+      
+      if (enableVirusScan && apiKey) {
+        virusTotalService = new VirusTotalService({
+          apiKey,
+          timeout: 30000,
+          maxRetries: 2,
+        });
+        console.log('VirusTotal service initialized');
+        
+        // Initialize security check service
+        securityCheckService = new SecurityCheckService(virusTotalService, {
+          enabled: true,
+          autoScan: settingsStore.get('autoScanDownloads') || false,
+          blockMalicious: false, // Don't auto-block, let user decide
+          warnThreshold: 1,
+        });
+        console.log('Security check service initialized');
+      } else {
+        console.log('VirusTotal service not configured (API key missing or disabled)');
+      }
+    } catch (error) {
+      console.error('Failed to initialize security services:', error);
+    }
+  }
+
   // Initialize download manager (only if database is available)
   if (db) {
-    downloadManager = new DownloadManager(db);
-    console.log('Download manager initialized');
+    downloadManager = new DownloadManager(
+      db, 
+      5, 
+      securityCheckService || undefined, 
+      categoryService || undefined
+    );
+    console.log('Download manager initialized with AI and security services');
   } else {
     console.log('Skipping download manager initialization (no database)');
   }
@@ -84,8 +194,7 @@ async function initializeServices() {
       console.log('Clipboard URL detected:', url);
       try {
         // Get default download directory from settings
-        const directory = db?.getSetting('default_download_directory');
-        const downloadDir = directory || app.getPath('downloads');
+        const downloadDir = settingsStore?.get('defaultDirectory') || app.getPath('downloads');
         downloadManager?.addDownload({
           url,
           directory: downloadDir,
@@ -95,8 +204,8 @@ async function initializeServices() {
       }
     });
 
-    // Initialize IPC bridge
-    ipcBridge = new IPCBridge(downloadManager, db, clipboardWatcher);
+    // Initialize IPC bridge (i18n and settingsStore are guaranteed to be initialized at this point)
+    ipcBridge = new IPCBridge(downloadManager, db, i18n!, settingsStore!, clipboardWatcher);
 
     // Setup download event handlers for notifications and tray
     setupDownloadEventHandlers();

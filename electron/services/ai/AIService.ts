@@ -23,14 +23,15 @@ export class AIService {
   private rateLimiter: RateLimiter;
 
   constructor(config: AIServiceConfig = {}) {
-    this.apiUrl = config.apiUrl || 'https://text.pollinations.ai';
+    this.apiUrl = config.apiUrl || 'https://text.pollinations.ai/openai';
     this.timeout = config.timeout || 10000; // 10 seconds
     this.maxRetries = config.maxRetries || 2;
 
     this.axiosInstance = axios.create({
       timeout: this.timeout,
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
       }
     });
 
@@ -145,16 +146,29 @@ export class AIService {
 
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       try {
+        // Pollinations.ai OpenAI-compatible API
         const response = await this.axiosInstance.post(
           this.apiUrl,
-          { prompt },
           {
-            headers: {
-              'Accept': 'text/plain'
-            }
+            model: 'openai',
+            messages: [
+              {
+                role: 'user',
+                content: prompt
+              }
+            ]
           }
         );
 
+        // Extract content from OpenAI-style response
+        if (response.data && response.data.choices && response.data.choices[0]) {
+          const content = response.data.choices[0].message?.content || response.data.choices[0].text;
+          if (content && typeof content === 'string') {
+            return content.trim();
+          }
+        }
+
+        // Fallback: if response is directly a string
         if (response.data && typeof response.data === 'string') {
           return response.data.trim();
         }

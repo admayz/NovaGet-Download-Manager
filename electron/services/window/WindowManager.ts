@@ -14,14 +14,21 @@ interface WindowState {
 export class WindowManager {
   private mainWindow: BrowserWindow | null = null;
   private stateFilePath: string;
-  private defaultState: WindowState = {
-    width: 1600,
-    height: 800,
-    isMaximized: false,
-  };
+  private defaultState: WindowState;
 
   constructor() {
     this.stateFilePath = path.join(app.getPath('userData'), 'window-state.json');
+    
+    // Calculate default window size based on screen size (75% of screen)
+    const { screen } = require('electron');
+    const primaryDisplay = screen.getPrimaryDisplay();
+    const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+    
+    this.defaultState = {
+      width: Math.floor(screenWidth * 0.75),
+      height: Math.floor(screenHeight * 0.75),
+      isMaximized: false,
+    };
   }
 
   createMainWindow(): BrowserWindow {
@@ -154,10 +161,22 @@ export class WindowManager {
   }
 
   private getAppIcon(): string | undefined {
-    const iconPath = path.join(__dirname, '../../assets/icon.png');
-    if (fs.existsSync(iconPath)) {
-      return iconPath;
+    // Try multiple possible paths for the icon
+    const possiblePaths = [
+      path.join(__dirname, '../assets/icon.png'),           // From dist/services/window
+      path.join(__dirname, '../../assets/icon.png'),        // Alternative path
+      path.join(process.cwd(), 'electron/assets/icon.png'), // From project root
+      path.join(__dirname, '../../../electron/assets/icon.png'), // From dist
+    ];
+
+    for (const iconPath of possiblePaths) {
+      if (fs.existsSync(iconPath)) {
+        console.log('Icon found at:', iconPath);
+        return iconPath;
+      }
     }
+
+    console.warn('Icon not found, checked paths:', possiblePaths);
     return undefined;
   }
 

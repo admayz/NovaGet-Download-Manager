@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo } from 'react';
 import { useDownloadStore } from '@/store/downloadStore';
+import { useTranslation } from '@/hooks/useTranslation';
 import { DownloadCard } from '@/components/DownloadCard';
 import { AddDownloadDialog } from '@/components/AddDownloadDialog';
 import { formatSpeed, formatTime, formatBytes } from '@/lib/formatters';
@@ -16,6 +17,7 @@ import {
 } from '@heroicons/react/24/outline';
 
 export default function DashboardPage() {
+  const { t } = useTranslation();
   const {
     downloads,
     loadDownloads,
@@ -35,6 +37,20 @@ export default function DashboardPage() {
   // Load downloads on mount
   useEffect(() => {
     loadDownloads();
+    
+    // Listen for download completion events to refresh stats
+    if (typeof window !== 'undefined' && window.electron) {
+      const unsubscribe = window.electron.download.onComplete(() => {
+        // Reload stats when a download completes
+        window.electron.stats.get().then((response) => {
+          if (response.success && response.stats) {
+            setStats(response.stats);
+          }
+        });
+      });
+      
+      return unsubscribe;
+    }
   }, [loadDownloads]);
 
   // Load statistics
@@ -42,13 +58,21 @@ export default function DashboardPage() {
     const loadStats = async () => {
       if (typeof window !== 'undefined' && window.electron) {
         const response = await window.electron.stats.get();
+        console.log('[Dashboard] Stats loaded:', response.stats);
         if (response.success && response.stats) {
           setStats(response.stats);
         }
       }
     };
+    
+    // Load stats immediately
     loadStats();
-  }, [downloads]);
+    
+    // Reload stats every 3 seconds for faster updates
+    const interval = setInterval(loadStats, 3000);
+    
+    return () => clearInterval(interval);
+  }, []);
 
   const activeDownloads = getActiveDownloads();
   const totalSpeed = getTotalSpeed();
@@ -79,9 +103,9 @@ export default function DashboardPage() {
     <div className="p-8">
       {/* Header */}
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Dashboard</h1>
+        <h1 className="text-3xl font-bold text-gray-900 dark:text-white">{t('dashboard.title')}</h1>
         <p className="text-gray-600 dark:text-gray-400 mt-2">
-          Overview of your downloads and quick actions
+          {t('dashboard.subtitle')}
         </p>
       </div>
 
@@ -92,13 +116,13 @@ export default function DashboardPage() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-gray-600 dark:text-gray-400 font-medium">
-                Total Downloads
+                {t('dashboard.totalDownloads')}
               </p>
               <p className="text-3xl font-bold text-gray-900 dark:text-white mt-2">
                 {stats.totalDownloads}
               </p>
               <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
-                All time
+                {t('dashboard.allTime')}
               </p>
             </div>
             <div className="text-4xl">
@@ -112,13 +136,13 @@ export default function DashboardPage() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-gray-600 dark:text-gray-400 font-medium">
-                Total Data Downloaded
+                {t('dashboard.totalDataDownloaded')}
               </p>
               <p className="text-3xl font-bold text-gray-900 dark:text-white mt-2">
                 {formatBytes(stats.totalBytes)}
               </p>
               <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
-                All time
+                {t('dashboard.allTime')}
               </p>
             </div>
             <div className="text-4xl">
@@ -132,13 +156,13 @@ export default function DashboardPage() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-gray-600 dark:text-gray-400 font-medium">
-                Average Speed
+                {t('dashboard.averageSpeed')}
               </p>
               <p className="text-3xl font-bold text-gray-900 dark:text-white mt-2">
                 {formatSpeed(stats.averageSpeed)}
               </p>
               <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
-                Historical average
+                {t('dashboard.historicalAverage')}
               </p>
             </div>
             <div className="text-4xl">
@@ -151,7 +175,7 @@ export default function DashboardPage() {
       {/* Quick Actions Section - Task 12.2 */}
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-8">
         <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
-          Quick Actions
+          {t('dashboard.quickActions')}
         </h2>
         <div className="flex flex-wrap gap-4">
           <button
@@ -159,27 +183,27 @@ export default function DashboardPage() {
             className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-600 hover:to-indigo-700 text-white rounded-lg font-medium transition-all shadow-md hover:shadow-lg"
           >
             <PlusIcon className="w-5 h-5" />
-            Add Download
+            {t('download.addDownload')}
           </button>
 
           <button
             onClick={handlePauseAll}
             disabled={!hasActiveDownloads}
             className="flex items-center gap-2 px-6 py-3 bg-yellow-500 hover:bg-yellow-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg disabled:hover:shadow-md"
-            title={hasActiveDownloads ? 'Pause all active downloads' : 'No active downloads'}
+            title={hasActiveDownloads ? t('dashboard.pauseAllTooltip') : t('dashboard.noActiveDownloadsTooltip')}
           >
             <PauseIcon className="w-5 h-5" />
-            Pause All
+            {t('download.pauseAll')}
           </button>
 
           <button
             onClick={handleResumeAll}
             disabled={!hasPausedDownloads}
             className="flex items-center gap-2 px-6 py-3 bg-green-500 hover:bg-green-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg disabled:hover:shadow-md"
-            title={hasPausedDownloads ? 'Resume all paused downloads' : 'No paused downloads'}
+            title={hasPausedDownloads ? t('dashboard.resumeAllTooltip') : t('dashboard.noPausedDownloads')}
           >
             <PlayIcon className="w-5 h-5" />
-            Resume All
+            {t('download.resumeAll')}
           </button>
         </div>
       </div>
@@ -189,10 +213,10 @@ export default function DashboardPage() {
         <div className="flex items-center justify-between mb-6">
           <div>
             <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
-              Active Downloads
+              {t('download.activeDownloads')}
             </h2>
             <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-              {activeDownloads.length} active download{activeDownloads.length !== 1 ? 's' : ''}
+              {t('dashboard.activeDownloadsCount', { count: activeDownloads.length.toString() })}
             </p>
           </div>
 
@@ -200,13 +224,13 @@ export default function DashboardPage() {
           {hasActiveDownloads && (
             <div className="flex items-center gap-6 text-sm">
               <div className="text-right">
-                <p className="text-gray-600 dark:text-gray-400">Total Speed</p>
+                <p className="text-gray-600 dark:text-gray-400">{t('download.stats.totalSpeed')}</p>
                 <p className="text-lg font-bold text-blue-600 dark:text-blue-400">
                   {formatSpeed(throttledTotalSpeed)}
                 </p>
               </div>
               <div className="text-right">
-                <p className="text-gray-600 dark:text-gray-400">Remaining Time</p>
+                <p className="text-gray-600 dark:text-gray-400">{t('download.stats.remainingTime')}</p>
                 <p className="text-lg font-bold text-gray-900 dark:text-white">
                   {formatTime(totalRemainingTime)}
                 </p>
@@ -226,10 +250,10 @@ export default function DashboardPage() {
           <div className="text-center py-12">
             <ArrowDownTrayIcon className="w-16 h-16 text-gray-300 dark:text-gray-600 mx-auto mb-4" />
             <p className="text-gray-600 dark:text-gray-400 text-lg">
-              No active downloads
+              {t('download.noActiveDownloads')}
             </p>
             <p className="text-gray-500 dark:text-gray-500 text-sm mt-2">
-              Click &quot;Add Download&quot; to start downloading files
+              {t('download.noDownloadsMessage')}
             </p>
           </div>
         )}

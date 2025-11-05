@@ -30,6 +30,12 @@ export interface DownloadProgress {
   status: 'queued' | 'downloading' | 'paused' | 'completed' | 'failed';
   segments: SegmentProgress[];
   error?: string;
+  securityScan?: {
+    scanned: boolean;
+    safe: boolean;
+    detections?: number;
+    scanDate?: number;
+  };
 }
 
 export interface DownloadRecord {
@@ -48,6 +54,9 @@ export interface DownloadRecord {
   created_at: number;
   completed_at?: number;
   error_message?: string;
+  security_scan_status?: string; // 'pending' | 'scanned' | 'safe' | 'threat'
+  security_scan_detections?: number;
+  security_scan_date?: number;
 }
 
 export interface Statistics {
@@ -112,6 +121,13 @@ export interface ElectronAPI {
 
   dialog: {
     selectDirectory: () => Promise<IPCResponse<{ path?: string; canceled?: boolean }>>;
+  };
+
+  i18n: {
+    setLanguage: (languageCode: string) => Promise<IPCResponse>;
+    getLanguage: () => Promise<IPCResponse<{ language: string }>>;
+    translate: (key: string, params?: Record<string, string>) => Promise<IPCResponse<{ translation: string }>>;
+    getSupportedLanguages: () => Promise<IPCResponse<{ languages: Array<{ code: string; name: string; nativeName: string }> }>>;
   };
 }
 

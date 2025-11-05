@@ -2,6 +2,7 @@
 export { DownloadCard } from './DownloadCard';
 export { ProgressBar } from './ProgressBar';
 export { AddDownloadDialog } from './AddDownloadDialog';
+export { ConfirmDialog } from './ConfirmDialog';
 export { SpeedChart } from './SpeedChart';
 export { DownloadList } from './DownloadList';
 export { DownloadDetailView } from './DownloadDetailView';

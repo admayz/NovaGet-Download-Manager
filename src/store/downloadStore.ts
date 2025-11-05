@@ -201,37 +201,9 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
         return { downloads: [...state.downloads, progress] };
       }
       
-      // Throttle updates - only update if there's a meaningful change
-      const existing = state.downloads[index];
-      const now = Date.now();
-      const lastUpdate = (existing as any)._lastUpdate || 0;
-      const timeSinceLastUpdate = now - lastUpdate;
-      
-      // Throttle to max 10 updates per second (100ms)
-      if (timeSinceLastUpdate < 100) {
-        // Check if it's a status change or completion - these should always update
-        if (
-          existing.status === progress.status &&
-          progress.status !== 'completed' &&
-          progress.status !== 'failed'
-        ) {
-          return state;
-        }
-      }
-      
-      // Only update if there's a meaningful change
-      if (
-        existing.status === progress.status &&
-        Math.abs(existing.percentage - progress.percentage) < 0.5 &&
-        Math.abs(existing.speed - progress.speed) < 1024 // Less than 1KB/s difference
-      ) {
-        // No significant change, skip update
-        return state;
-      }
-      
-      // Update the download with timestamp
+      // Always update - throttling is handled in the listener
       const newDownloads = [...state.downloads];
-      newDownloads[index] = { ...progress, _lastUpdate: now } as any;
+      newDownloads[index] = progress;
       return { downloads: newDownloads };
     });
   },

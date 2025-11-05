@@ -1,10 +1,13 @@
 import { EventEmitter } from 'events';
+import { app } from 'electron';
 import { Download, DownloadOptions, DownloadProgress } from './Download';
 import { DatabaseService } from '../database/DatabaseService';
 import { SpeedLimiterManager } from './SpeedLimiter';
 import { NetworkMonitor } from '../network/NetworkMonitor';
 import { URLValidator } from '../../utils/urlValidator';
 import { PathSanitizer } from '../../utils/pathSanitizer';
+import { SecurityCheckService, SecurityCheckResponse } from '../security';
+import { CategoryService } from '../category/CategoryService';
 
 /**
  * DownloadManager manages the download queue and coordinates multiple downloads
@@ -18,18 +21,27 @@ export class DownloadManager extends EventEmitter {
   private speedLimiterManager: SpeedLimiterManager;
   private networkMonitor: NetworkMonitor;
   private pausedByNetwork: Set<string> = new Set();
+  private securityCheckService?: SecurityCheckService;
+  private categoryService?: CategoryService;
 
-  constructor(db: DatabaseService, maxConcurrent: number = 5) {
+  constructor(db: DatabaseService, maxConcurrent: number = 5, securityCheckService?: SecurityCheckService, categoryService?: CategoryService) {
     super();
     this.db = db;
     this.maxConcurrent = maxConcurrent;
     this.speedLimiterManager = new SpeedLimiterManager();
     this.networkMonitor = new NetworkMonitor();
+    this.securityCheckService = securityCheckService;
+    this.categoryService = categoryService;
     this.setupNetworkMonitoring();
+    
+    if (this.securityCheckService) {
+      this.setupSecurityCheckListeners();
+    }
   }
 
   /**
    * Add a new download to the queue
+   * Requirements: 1.1, 15.1, 15.2
    */
   async addDownload(options: DownloadOptions): Promise<string> {
     // Validate URL
@@ -40,6 +52,48 @@ export class DownloadManager extends EventEmitter {
 
     // Use sanitized URL
     options.url = urlValidation.sanitizedUrl!;
+
+    // Pre-download security check
+    if (this.securityCheckService) {
+      const securityCheck = await this.performSecurityCheck(options.url);
+      
+      if (!securityCheck.isAllowed) {
+        throw new Error(securityCheck.error || 'Security check failed');
+      }
+
+      // If there's a warning (threats detected but not blocked), emit event for UI
+      if (securityCheck.result && !securityCheck.result.isSafe) {
+        this.emit('securityWarning', {
+          url: options.url,
+          result: securityCheck.result
+        });
+      }
+    }
+
+    // If no directory provided, use default from settings or system Downloads folder
+    if (!options.directory || options.directory.trim() === '') {
+      console.log('[DownloadManager] No directory provided, checking settings...');
+      // Try camelCase key first (from settingsStore)
+      let defaultDir = this.db.getSetting('defaultDirectory');
+      console.log('[DownloadManager] Default directory from DB (defaultDirectory):', defaultDir);
+      
+      // Fallback to snake_case for backwards compatibility
+      if (!defaultDir) {
+        defaultDir = this.db.getSetting('default_download_directory');
+        console.log('[DownloadManager] Default directory from DB (default_download_directory):', defaultDir);
+      }
+      
+      if (defaultDir) {
+        options.directory = defaultDir;
+        console.log('[DownloadManager] Using directory from settings:', defaultDir);
+      } else {
+        // Use system Downloads folder as fallback
+        options.directory = app.getPath('downloads');
+        console.log('[DownloadManager] Using system Downloads folder:', options.directory);
+      }
+    } else {
+      console.log('[DownloadManager] Directory provided:', options.directory);
+    }
 
     // Validate and sanitize directory path
     const dirValidation = PathSanitizer.validateDirectory(options.directory);
@@ -62,6 +116,27 @@ export class DownloadManager extends EventEmitter {
     // Store in map
     this.downloads.set(downloadId, download);
 
+    // Categorize file using AI if enabled
+    let category: string | undefined;
+    let aiSuggestedName: string | undefined;
+    
+    if (this.categoryService) {
+      try {
+        const useAI = this.db.getSetting('enableAutoCategorization') === 'true';
+        const categoryResult = await this.categoryService.detectCategory(download.filename, useAI);
+        category = categoryResult.category;
+        
+        // Get AI suggested name if enabled
+        const useSmartNaming = this.db.getSetting('enableSmartNaming') === 'true';
+        if (useSmartNaming) {
+          // AI naming will be implemented later
+          console.log('[DownloadManager] Smart naming enabled but not yet implemented');
+        }
+      } catch (error) {
+        console.error('[DownloadManager] AI categorization failed:', error);
+      }
+    }
+
     // Save to database
     this.db.createDownload({
       url: options.url,
@@ -70,6 +145,8 @@ export class DownloadManager extends EventEmitter {
       total_bytes: 0,
       downloaded_bytes: 0,
       status: 'queued',
+      category,
+      ai_suggested_name: aiSuggestedName,
       scheduled_time: options.scheduledTime?.getTime(),
       speed_limit: options.speedLimit,
       created_at: Date.now(),
@@ -84,8 +161,16 @@ export class DownloadManager extends EventEmitter {
     // Emit event
     this.emit('downloadAdded', downloadId);
 
-    // Try to start download if under concurrent limit
-    await this.processQueue();
+    // Only auto-start if there are available slots
+    // This allows new downloads to start automatically when added
+    // But prevents auto-start when user cancels/pauses (those don't call addDownload)
+    const activeCount = this.getActiveDownloads().length;
+    if (activeCount < this.maxConcurrent) {
+      // Don't await - start download in background
+      this.processQueue().catch(error => {
+        console.error('Failed to process queue:', error);
+      });
+    }
 
     return downloadId;
   }
@@ -96,7 +181,17 @@ export class DownloadManager extends EventEmitter {
   async pauseDownload(downloadId: string): Promise<void> {
     const download = this.downloads.get(downloadId);
     if (!download) {
-      throw new Error(`Download ${downloadId} not found`);
+      // If download not in memory, just update database status
+      const dbDownload = this.db.getDownload(downloadId);
+      if (!dbDownload) {
+        throw new Error(`Download ${downloadId} not found`);
+      }
+      
+      this.db.updateDownload(downloadId, {
+        status: 'paused',
+      });
+      
+      return;
     }
 
     await download.pause();
@@ -106,31 +201,70 @@ export class DownloadManager extends EventEmitter {
       status: 'paused',
     });
 
-    // Try to start next download in queue
-    await this.processQueue();
+    // Don't automatically start next download when user manually pauses
+    // Only process queue when downloads complete or user explicitly resumes
   }
 
   /**
    * Resume a paused download
    */
   async resumeDownload(downloadId: string): Promise<void> {
-    const download = this.downloads.get(downloadId);
+    let download = this.downloads.get(downloadId);
+    
+    // If download not in memory, try to restore from database
     if (!download) {
-      throw new Error(`Download ${downloadId} not found`);
+      const dbDownload = this.db.getDownload(downloadId);
+      if (!dbDownload) {
+        throw new Error(`Download ${downloadId} not found`);
+      }
+      
+      console.log(`[DownloadManager] Restoring download ${downloadId} from database`);
+      console.log(`[DownloadManager] Downloaded: ${dbDownload.downloaded_bytes} / ${dbDownload.total_bytes}`);
+      
+      // Recreate download from database record
+      download = new Download({
+        url: dbDownload.url,
+        filename: dbDownload.filename,
+        directory: dbDownload.directory,
+        segments: 4, // Default segment count
+        speedLimit: dbDownload.speed_limit || undefined,
+      });
+      
+      // Override the generated ID with the original one
+      (download as any).id = downloadId;
+      
+      // Restore download state
+      (download as any).totalBytes = dbDownload.total_bytes;
+      (download as any).downloadedBytes = dbDownload.downloaded_bytes;
+      (download as any).status = 'paused';
+      
+      // Restore temp directory path
+      const path = require('path');
+      (download as any).tempDir = path.join(dbDownload.directory, `.novaget_${downloadId}`);
+      
+      // Initialize segments with existing temp files
+      // This will create segment objects that will check for existing temp files
+      await (download as any).initializeSegments();
+      
+      // Add to downloads map
+      this.downloads.set(downloadId, download);
+      
+      // Setup event listeners
+      this.setupDownloadListeners(download);
+      
+      console.log(`[DownloadManager] Download ${downloadId} restored with ${(download as any).segments.length} segments`);
     }
 
-    // Add back to queue if not already there
-    if (!this.queue.includes(downloadId)) {
-      this.queue.push(downloadId);
-    }
+    // Resume the download
+    await download.resume();
 
     // Update database
     this.db.updateDownload(downloadId, {
-      status: 'queued',
+      status: 'downloading',
     });
 
-    // Try to start download
-    await this.processQueue();
+    // Emit status change
+    this.emit('download:statusChange', { downloadId, status: 'downloading' });
   }
 
   /**
@@ -138,31 +272,29 @@ export class DownloadManager extends EventEmitter {
    */
   async cancelDownload(downloadId: string): Promise<void> {
     const download = this.downloads.get(downloadId);
-    if (!download) {
-      throw new Error(`Download ${downloadId} not found`);
+    
+    // If download exists in memory, cancel it
+    if (download) {
+      await download.cancel();
+
+      // Remove from queue
+      const queueIndex = this.queue.indexOf(downloadId);
+      if (queueIndex > -1) {
+        this.queue.splice(queueIndex, 1);
+      }
+
+      // Remove from map
+      this.downloads.delete(downloadId);
     }
 
-    await download.cancel();
-
-    // Remove from queue
-    const queueIndex = this.queue.indexOf(downloadId);
-    if (queueIndex > -1) {
-      this.queue.splice(queueIndex, 1);
-    }
-
-    // Update database
-    this.db.updateDownload(downloadId, {
-      status: 'failed',
-    });
-
-    // Remove from map
-    this.downloads.delete(downloadId);
+    // Delete from database completely
+    this.db.deleteDownload(downloadId);
 
     // Emit event
     this.emit('downloadCancelled', downloadId);
 
-    // Try to start next download
-    await this.processQueue();
+    // Don't automatically start next download when user cancels
+    // Only process queue when downloads complete or user explicitly resumes
   }
 
   /**
@@ -182,7 +314,7 @@ export class DownloadManager extends EventEmitter {
     // Update database
     this.db.updateDownload(downloadId, {
       status: 'queued',
-      error_message: undefined,
+      error_message: null,
     });
 
     // Try to start download
@@ -394,6 +526,82 @@ export class DownloadManager extends EventEmitter {
   }
 
   /**
+   * Perform pre-download security check
+   * Requirements: 1.1, 15.1, 15.2
+   */
+  private async performSecurityCheck(url: string): Promise<SecurityCheckResponse> {
+    if (!this.securityCheckService) {
+      return { isAllowed: true, skipped: true };
+    }
+
+    try {
+      const result = await this.securityCheckService.checkUrlSecurity({
+        url,
+        timeout: 30000 // 30 seconds timeout
+      });
+
+      return result;
+    } catch (error) {
+      console.error('Security check error:', error);
+      // On error, allow download but log the error
+      return {
+        isAllowed: true,
+        error: (error as Error).message
+      };
+    }
+  }
+
+  /**
+   * Setup security check event listeners
+   */
+  private setupSecurityCheckListeners(): void {
+    if (!this.securityCheckService) return;
+
+    this.securityCheckService.on('checkStarted', ({ url }) => {
+      this.emit('securityCheckStarted', { url });
+    });
+
+    this.securityCheckService.on('checkCompleted', ({ url, result }) => {
+      this.emit('securityCheckCompleted', { url, result });
+    });
+
+    this.securityCheckService.on('threatBlocked', ({ url, result }) => {
+      this.emit('securityThreatBlocked', { url, result });
+    });
+
+    this.securityCheckService.on('threatWarning', ({ url, result }) => {
+      this.emit('securityThreatWarning', { url, result });
+    });
+
+    this.securityCheckService.on('checkTimeout', ({ url, error }) => {
+      this.emit('securityCheckTimeout', { url, error });
+    });
+
+    this.securityCheckService.on('checkError', ({ url, error }) => {
+      this.emit('securityCheckError', { url, error });
+    });
+
+    this.securityCheckService.on('notConfigured', ({ url }) => {
+      this.emit('securityNotConfigured', { url });
+    });
+  }
+
+  /**
+   * Set security check service
+   */
+  setSecurityCheckService(service: SecurityCheckService): void {
+    this.securityCheckService = service;
+    this.setupSecurityCheckListeners();
+  }
+
+  /**
+   * Get security check service
+   */
+  getSecurityCheckService(): SecurityCheckService | undefined {
+    return this.securityCheckService;
+  }
+
+  /**
    * Process the download queue
    * Starts downloads up to the concurrent limit
    */
@@ -437,7 +645,13 @@ export class DownloadManager extends EventEmitter {
       });
     });
 
-    // Download completed
+    // Download completed (before security check)
+    download.on('downloadCompleted', async (data: { downloadId: string; filePath: string; filename: string }) => {
+      // Perform post-download security check
+      await this.performPostDownloadSecurityCheck(data.downloadId, data.filePath);
+    });
+
+    // Download completed (after security check or if skipped)
     download.on('complete', (progress: DownloadProgress) => {
       // Remove from queue if still there
       const queueIndex = this.queue.indexOf(downloadId);
@@ -469,13 +683,155 @@ export class DownloadManager extends EventEmitter {
 
       this.emit('downloadError', { downloadId, error, progress });
 
-      // Process next in queue
-      this.processQueue();
+      // Don't automatically start next download on error
+      // User should manually retry or start next download
     });
 
     // Status change
     download.on('statusChange', (status: string) => {
       this.emit('downloadStatusChange', { downloadId, status });
     });
+  }
+
+  /**
+   * Perform post-download security check
+   * Requirements: 1.1, 15.1, 15.2
+   */
+  private async performPostDownloadSecurityCheck(downloadId: string, filePath: string): Promise<void> {
+    const download = this.downloads.get(downloadId);
+    if (!download) {
+      console.error(`Download ${downloadId} not found for security check`);
+      return;
+    }
+
+    // If no security service, finalize immediately
+    if (!this.securityCheckService) {
+      download.finalizeDownload();
+      return;
+    }
+
+    try {
+      this.emit('postDownloadCheckStarted', { downloadId, filePath });
+
+      const result = await this.securityCheckService.checkFileSecurity({
+        filePath
+      });
+
+      // Set security scan result on download
+      if (result.result) {
+        download.setSecurityScan({
+          scanned: true,
+          safe: result.result.isSafe,
+          detections: result.result.positives,
+          scanDate: Date.now()
+        });
+      }
+
+      if (!result.isAllowed && result.result) {
+        // Virus detected - emit event for UI to handle
+        this.emit('virusDetected', {
+          downloadId,
+          filePath,
+          result: result.result
+        });
+
+        // Update database with security warning
+        this.db.updateDownload(downloadId, {
+          status: 'completed',
+          error_message: `Security warning: ${result.result.positives}/${result.result.total} threats detected`,
+          security_scan_status: 'threat',
+          security_scan_detections: result.result.positives,
+          security_scan_date: Date.now()
+        });
+
+        // Don't delete file automatically - let user decide
+        // Finalize download but mark with warning
+        download.finalizeDownload();
+      } else {
+        // File is safe or check was skipped
+        this.emit('postDownloadCheckCompleted', {
+          downloadId,
+          filePath,
+          result: result.result
+        });
+
+        // Update database with safe status
+        if (result.result) {
+          this.db.updateDownload(downloadId, {
+            security_scan_status: 'safe',
+            security_scan_detections: 0,
+            security_scan_date: Date.now()
+          });
+        }
+
+        // Finalize download normally
+        download.finalizeDownload();
+      }
+
+    } catch (error) {
+      console.error('Post-download security check error:', error);
+      this.emit('postDownloadCheckError', {
+        downloadId,
+        filePath,
+        error: (error as Error).message
+      });
+
+      // On error, finalize download anyway
+      download.finalizeDownload();
+    }
+  }
+
+  /**
+   * Move file to quarantine
+   * Called when user wants to quarantine a suspicious file
+   */
+  async quarantineFile(downloadId: string): Promise<string> {
+    const download = this.downloads.get(downloadId);
+    if (!download) {
+      throw new Error(`Download ${downloadId} not found`);
+    }
+
+    const fs = require('fs');
+    const path = require('path');
+    const finalPath = download.getFinalPath();
+
+    if (!fs.existsSync(finalPath)) {
+      throw new Error('File not found');
+    }
+
+    // Create quarantine directory
+    const quarantineDir = path.join(app.getPath('userData'), 'quarantine');
+    if (!fs.existsSync(quarantineDir)) {
+      fs.mkdirSync(quarantineDir, { recursive: true });
+    }
+
+    // Move file to quarantine with timestamp
+    const timestamp = Date.now();
+    const quarantinePath = path.join(quarantineDir, `${timestamp}_${path.basename(finalPath)}`);
+    
+    fs.renameSync(finalPath, quarantinePath);
+
+    this.emit('fileQuarantined', { downloadId, originalPath: finalPath, quarantinePath });
+
+    return quarantinePath;
+  }
+
+  /**
+   * Delete downloaded file
+   * Called when user wants to delete a suspicious file
+   */
+  async deleteDownloadedFile(downloadId: string): Promise<void> {
+    const download = this.downloads.get(downloadId);
+    if (!download) {
+      throw new Error(`Download ${downloadId} not found`);
+    }
+
+    const fs = require('fs');
+    const finalPath = download.getFinalPath();
+
+    if (fs.existsSync(finalPath)) {
+      fs.unlinkSync(finalPath);
+      this.emit('fileDeleted', { downloadId, filePath: finalPath });
+    }
   }
 }

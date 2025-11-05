@@ -13,11 +13,14 @@ export interface DownloadRecord {
   category?: string;
   tags?: string; // JSON array stored as string
   ai_suggested_name?: string;
-  scheduled_time?: number;
+  scheduled_time?: number | null;
   speed_limit?: number;
   created_at: number;
   completed_at?: number;
-  error_message?: string;
+  error_message?: string | null;
+  security_scan_status?: string;
+  security_scan_detections?: number;
+  security_scan_date?: number;
 }
 
 export interface SegmentRecord {

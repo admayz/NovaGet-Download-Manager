@@ -14,6 +14,7 @@ export interface DownloadOptions {
   speedLimit?: number;
   scheduledTime?: Date;
   headers?: Record<string, string>;
+  skipSecurityCheck?: boolean;
 }
 
 export interface DownloadProgress {
@@ -28,6 +29,12 @@ export interface DownloadProgress {
   status: 'queued' | 'downloading' | 'paused' | 'completed' | 'failed';
   segments: SegmentProgress[];
   error?: string;
+  securityScan?: {
+    scanned: boolean;
+    safe: boolean;
+    detections?: number;
+    scanDate?: number;
+  };
 }
 
 /**
@@ -55,6 +62,13 @@ export class Download extends EventEmitter {
   private lastDownloadedBytes: number = 0;
   private currentSpeed: number = 0;
   private error?: string;
+  private skipSecurityCheck: boolean;
+  private securityScan?: {
+    scanned: boolean;
+    safe: boolean;
+    detections?: number;
+    scanDate?: number;
+  };
 
   constructor(options: DownloadOptions) {
     super();
@@ -63,6 +77,7 @@ export class Download extends EventEmitter {
     this.directory = options.directory;
     this.filename = options.filename || this.extractFilename(options.url);
     this.segmentCount = options.segments || 4;
+    this.skipSecurityCheck = options.skipSecurityCheck || false;
     
     // Add default headers to mimic a real browser
     const urlObj = new URL(options.url);
@@ -117,8 +132,26 @@ export class Download extends EventEmitter {
       // Download all segments in parallel
       await this.downloadSegments();
 
+      // Check if download was paused/cancelled during segment download
+      if (this.status !== 'downloading') {
+        return; // Don't merge if paused or cancelled
+      }
+
       // Merge segments into final file
       await this.mergeSegments();
+
+      // Emit post-download event for security check
+      // Don't mark as completed yet - let DownloadManager handle security check
+      if (!this.skipSecurityCheck) {
+        this.emit('downloadCompleted', {
+          downloadId: this.id,
+          filePath: this.finalPath,
+          filename: this.filename
+        });
+        // Wait for security check confirmation
+        // Status will be updated by DownloadManager after security check
+        return;
+      }
 
       // Cleanup
       this.cleanup();
@@ -140,10 +173,16 @@ export class Download extends EventEmitter {
       return;
     }
 
+    console.log(`[Download] Pausing download ${this.id}`);
     this.status = 'paused';
     
     // Pause all segments
-    this.segments.forEach(segment => segment.pause());
+    this.segments.forEach((segment, i) => {
+      const before = segment.getProgress();
+      segment.pause();
+      const after = segment.getProgress();
+      console.log(`[Download] Segment ${i} paused: ${before.status} -> ${after.status}, ${after.downloaded} bytes`);
+    });
     
     this.emit('paused', this.getProgress());
     this.emit('statusChange', this.status);
@@ -163,11 +202,53 @@ export class Download extends EventEmitter {
     this.emit('statusChange', this.status);
 
     try {
+      console.log(`[Download] Resuming download ${this.id}`);
+      console.log(`[Download] Segments: ${this.segments.length}`);
+      
+      // Check segment status
+      this.segments.forEach((seg, i) => {
+        const progress = seg.getProgress();
+        console.log(`[Download] Segment ${i}: ${progress.downloaded} / ${seg.getSize()} bytes, status: ${progress.status}`);
+      });
+      
+      // Check if all segments are already completed
+      const allCompleted = this.segments.every(seg => seg.isCompleted());
+      console.log(`[Download] All segments completed: ${allCompleted}`);
+      
+      if (allCompleted && this.segments.length > 0) {
+        console.log(`[Download] All segments done, merging...`);
+        // All segments done, just merge
+        await this.mergeSegments();
+        this.cleanup();
+        this.status = 'completed';
+        this.emit('complete', this.getProgress());
+        this.emit('statusChange', this.status);
+        return;
+      }
+
+      console.log(`[Download] Starting segment downloads...`);
       // Resume all incomplete segments
       await this.downloadSegments();
 
+      // Check if download was paused during segment download
+      // Status can change during async operations
+      if (this.status !== 'downloading') {
+        return; // Don't merge if paused or failed
+      }
+
       // Merge segments
       await this.mergeSegments();
+
+      // Emit post-download event for security check
+      if (!this.skipSecurityCheck) {
+        this.emit('downloadCompleted', {
+          downloadId: this.id,
+          filePath: this.finalPath,
+          filename: this.filename
+        });
+        // Wait for security check confirmation
+        return;
+      }
 
       // Cleanup
       this.cleanup();
@@ -189,6 +270,9 @@ export class Download extends EventEmitter {
     
     // Cancel all segments
     this.segments.forEach(segment => segment.cancel());
+    
+    // Wait a bit for file handles to close
+    await new Promise(resolve => setTimeout(resolve, 100));
     
     // Cleanup temp files
     this.cleanup();
@@ -233,8 +317,16 @@ export class Download extends EventEmitter {
       remainingTime,
       status: this.status,
       segments: this.segments.map(s => s.getProgress()),
-      error: this.error
+      error: this.error,
+      securityScan: this.securityScan
     };
+  }
+
+  /**
+   * Set security scan result
+   */
+  setSecurityScan(scan: { scanned: boolean; safe: boolean; detections?: number; scanDate?: number }): void {
+    this.securityScan = scan;
   }
 
   /**
@@ -259,28 +351,34 @@ export class Download extends EventEmitter {
       console.log('Initializing segments for:', this.url);
       
       let response;
-      let contentLength = 0;
+      let contentLength = this.totalBytes; // Use existing totalBytes if available
+      let supportsRanges = true;
       
-      // Try HEAD request first
-      try {
-        response = await axios.head(this.url, { 
-          headers: this.headers,
-          maxRedirects: 5,
-          validateStatus: (status) => status >= 200 && status < 400,
-          httpsAgent: new (require('https').Agent)({
-            rejectUnauthorized: false,
-          }),
-        });
-        
-        console.log('HEAD response status:', response.status);
-        console.log('HEAD Content-Length:', response.headers['content-length']);
-        
-        // Check if we got a valid content-length
-        if (response.headers['content-length']) {
-          contentLength = parseInt(response.headers['content-length'], 10);
+      // Only fetch file info if we don't have it yet
+      if (contentLength === 0) {
+        // Try HEAD request first
+        try {
+          response = await axios.head(this.url, { 
+            headers: this.headers,
+            maxRedirects: 5,
+            validateStatus: (status) => status >= 200 && status < 400,
+            httpsAgent: new (require('https').Agent)({
+              rejectUnauthorized: false,
+            }),
+          });
+          
+          console.log('HEAD response status:', response.status);
+          console.log('HEAD Content-Length:', response.headers['content-length']);
+          
+          // Check if we got a valid content-length
+          if (response.headers['content-length']) {
+            contentLength = parseInt(response.headers['content-length'], 10);
+          }
+        } catch (headError: any) {
+          console.log('HEAD request failed:', headError.message);
         }
-      } catch (headError: any) {
-        console.log('HEAD request failed:', headError.message);
+      } else {
+        console.log('Using existing totalBytes:', contentLength);
       }
       
       // If HEAD didn't give us content-length, try GET with Range
@@ -307,39 +405,34 @@ export class Download extends EventEmitter {
         if (response.data && response.data.destroy) {
           response.data.destroy();
         }
-      }
-      
-      // Make sure we have a response
-      if (!response) {
-        throw new Error('Failed to get file information');
-      }
-      
-      // Check if server supports range requests
-      const acceptRanges = response.headers['accept-ranges'];
-      // If we got a 206 response, server definitely supports ranges
-      const supportsRanges = (response.status === 206) || (acceptRanges && acceptRanges !== 'none');
-      
-      console.log('Supports ranges:', supportsRanges, '(status:', response.status, ', accept-ranges:', acceptRanges, ')');
+        
+        // Check if server supports range requests
+        const acceptRanges = response.headers['accept-ranges'];
+        // If we got a 206 response, server definitely supports ranges
+        supportsRanges = (response.status === 206) || (acceptRanges && acceptRanges !== 'none');
+        
+        console.log('Supports ranges:', supportsRanges, '(status:', response.status, ', accept-ranges:', acceptRanges, ')');
 
-      // Parse content length from headers
-      // Prioritize Content-Range over Content-Length when doing Range requests
-      if (response.headers['content-range']) {
-        // Parse from Content-Range: bytes 0-0/1073741824
-        const match = response.headers['content-range'].match(/\/(\d+)/);
-        if (match) {
-          contentLength = parseInt(match[1], 10);
-          console.log('Parsed from Content-Range:', contentLength);
+        // Parse content length from headers
+        // Prioritize Content-Range over Content-Length when doing Range requests
+        if (response.headers['content-range']) {
+          // Parse from Content-Range: bytes 0-0/1073741824
+          const match = response.headers['content-range'].match(/\/(\d+)/);
+          if (match) {
+            contentLength = parseInt(match[1], 10);
+            console.log('Parsed from Content-Range:', contentLength);
+          }
+        }
+        
+        // Fallback to Content-Length if Content-Range not available
+        if (contentLength === 0 && response.headers['content-length']) {
+          contentLength = parseInt(response.headers['content-length'], 10);
+          console.log('Parsed from Content-Length:', contentLength);
         }
       }
       
-      // Fallback to Content-Length if Content-Range not available
-      if (contentLength === 0 && response.headers['content-length']) {
-        contentLength = parseInt(response.headers['content-length'], 10);
-        console.log('Parsed from Content-Length:', contentLength);
-      }
-      
       console.log('Final Content-Length:', contentLength);
-      console.log('Accept-Ranges:', acceptRanges);
+      console.log('Supports Ranges:', supportsRanges);
       
       if (contentLength === 0 || isNaN(contentLength)) {
         throw new Error('Could not determine file size');
@@ -537,19 +630,56 @@ export class Download extends EventEmitter {
    */
   private cleanup(): void {
     try {
-      // Delete segment temp files
+      // Remove all listeners first to prevent memory leaks
       this.segments.forEach(segment => {
-        if (fs.existsSync(segment.tempFilePath)) {
-          fs.unlinkSync(segment.tempFilePath);
-        }
-        
-        // Remove all listeners to prevent memory leaks
         segment.removeAllListeners();
       });
 
-      // Delete temp directory
+      // Try to delete segment temp files with retry logic
+      this.segments.forEach(segment => {
+        let retries = 3;
+        while (retries > 0) {
+          try {
+            if (fs.existsSync(segment.tempFilePath)) {
+              fs.unlinkSync(segment.tempFilePath);
+            }
+            break; // Success, exit retry loop
+          } catch (error) {
+            retries--;
+            if (retries === 0) {
+              console.warn(`Failed to delete temp file after retries: ${segment.tempFilePath}`);
+            } else {
+              // Wait a bit before retry (synchronous wait)
+              const start = Date.now();
+              while (Date.now() - start < 50) {
+                // Busy wait for 50ms
+              }
+            }
+          }
+        }
+      });
+
+      // Try to delete temp directory with retry logic
       if (fs.existsSync(this.tempDir)) {
-        fs.rmdirSync(this.tempDir);
+        let retries = 3;
+        while (retries > 0) {
+          try {
+            fs.rmSync(this.tempDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+            break; // Success, exit retry loop
+          } catch (error) {
+            retries--;
+            if (retries === 0) {
+              console.warn(`Failed to delete temp directory after retries: ${this.tempDir}`);
+              // Don't throw error, just log it
+            } else {
+              // Wait a bit before retry
+              const start = Date.now();
+              while (Date.now() - start < 100) {
+                // Busy wait for 100ms
+              }
+            }
+          }
+        }
       }
 
       // Clear segment array to allow garbage collection
@@ -558,6 +688,7 @@ export class Download extends EventEmitter {
 
     } catch (error) {
       console.error('Cleanup error:', error);
+      // Don't throw, just log - cleanup errors shouldn't break the app
     }
   }
 
@@ -600,6 +731,30 @@ export class Download extends EventEmitter {
    */
   private generateId(): string {
     return `dl_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  }
+
+  /**
+   * Finalize download after security check
+   * Called by DownloadManager after post-download security check
+   */
+  finalizeDownload(): void {
+    if (this.status === 'completed') {
+      return; // Already finalized
+    }
+
+    // Cleanup temp files
+    this.cleanup();
+
+    this.status = 'completed';
+    this.emit('complete', this.getProgress());
+    this.emit('statusChange', this.status);
+  }
+
+  /**
+   * Get final file path
+   */
+  getFinalPath(): string {
+    return this.finalPath;
   }
 
   /**

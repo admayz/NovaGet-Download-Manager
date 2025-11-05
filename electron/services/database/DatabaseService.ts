@@ -22,6 +22,7 @@ export class DatabaseService {
   constructor(dbPath?: string) {
     const defaultPath = path.join(app.getPath('userData'), 'novaget.db');
     this.dbPath = dbPath || defaultPath;
+    console.log('[DatabaseService] Database path:', this.dbPath);
   }
 
   async initialize(): Promise<void> {
@@ -67,7 +68,10 @@ export class DatabaseService {
         speed_limit INTEGER,
         created_at INTEGER NOT NULL,
         completed_at INTEGER,
-        error_message TEXT
+        error_message TEXT,
+        security_scan_status TEXT,
+        security_scan_detections INTEGER,
+        security_scan_date INTEGER
       )
     `);
 
@@ -137,8 +141,9 @@ export class DatabaseService {
       }
       
       fs.writeFileSync(this.dbPath, buffer);
+      console.log('[DatabaseService] Database saved successfully to:', this.dbPath);
     } catch (error) {
-      console.error('Failed to save database:', error);
+      console.error('[DatabaseService] Failed to save database:', error);
     }
   }
 
@@ -434,12 +439,14 @@ export class DatabaseService {
     // Check if exists
     const existing = this.getSetting(key);
     if (existing !== null) {
+      console.log(`[DatabaseService] Updating setting: ${key} = ${value}`);
       this.db.run('UPDATE settings SET value = ?, updated_at = ? WHERE key = ?', [
         value,
         now,
         key,
       ]);
     } else {
+      console.log(`[DatabaseService] Inserting new setting: ${key} = ${value}`);
       this.db.run('INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)', [
         key,
         value,
@@ -454,13 +461,17 @@ export class DatabaseService {
     if (!this.db) throw new Error('Database not initialized');
 
     const result = this.db.exec('SELECT key, value FROM settings');
-    if (result.length === 0) return {};
+    if (result.length === 0) {
+      console.log('[DatabaseService] No settings found in database');
+      return {};
+    }
 
     const settings: Record<string, string> = {};
     result[0].values.forEach((row) => {
       settings[row[0] as string] = row[1] as string;
     });
 
+    console.log('[DatabaseService] Loaded settings:', Object.keys(settings).length, 'keys');
     return settings;
   }
 

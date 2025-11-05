@@ -33,6 +33,51 @@ export function AddDownloadDialog({
       if (initialUrl) {
         setUrl(initialUrl);
       }
+      
+      // Load settings when dialog opens
+      if (typeof window !== 'undefined' && window.electron) {
+        // Load default directory
+        window.electron.settings.get('defaultDirectory').then((response) => {
+          if (response.success && response.value) {
+            setDirectory(response.value);
+          }
+        });
+        
+        // Load default segments
+        window.electron.settings.get('segmentsPerDownload').then((response) => {
+          if (response.success && response.value) {
+            const segmentsValue = parseInt(response.value);
+            if (!isNaN(segmentsValue) && segmentsValue > 0) {
+              setSegments(segmentsValue);
+            }
+          }
+        });
+        
+        // Load global speed limit
+        window.electron.settings.get('globalSpeedLimit').then((response) => {
+          if (response.success && response.value) {
+            const speedLimitBytes = parseInt(response.value);
+            if (!isNaN(speedLimitBytes) && speedLimitBytes > 0) {
+              // Convert bytes/s to MB/s for display
+              setSpeedLimit(speedLimitBytes / (1024 * 1024));
+            }
+          }
+        });
+      }
+      
+      // Add ESC key listener
+      const handleEscape = (e: KeyboardEvent) => {
+        if (e.key === 'Escape' && !isSubmitting) {
+          console.log('[AddDownloadDialog] ESC pressed');
+          onClose();
+        }
+      };
+      
+      document.addEventListener('keydown', handleEscape);
+      
+      return () => {
+        document.removeEventListener('keydown', handleEscape);
+      };
     } else {
       // Reset form when dialog closes
       setUrl('');
@@ -43,18 +88,9 @@ export function AddDownloadDialog({
       setScheduledTime('');
       setIsSubmitting(false);
     }
-  }, [isOpen, initialUrl]);
+  }, [isOpen, initialUrl, isSubmitting, onClose]);
 
-  useEffect(() => {
-    // Load default directory from settings
-    if (typeof window !== 'undefined' && window.electron) {
-      window.electron.settings.get('default_download_directory').then((response) => {
-        if (response.success && response.value) {
-          setDirectory(response.value);
-        }
-      });
-    }
-  }, []);
+
 
   const handleSelectDirectory = async () => {
     if (typeof window !== 'undefined' && window.electron) {
@@ -82,16 +118,21 @@ export function AddDownloadDialog({
     try {
       // Get directory from settings or use the current value
       let downloadDir = directory;
+      console.log('[AddDownloadDialog] Current directory state:', downloadDir);
+      
       if (!downloadDir && typeof window !== 'undefined' && window.electron) {
-        const response = await window.electron.settings.get('default_download_directory');
+        console.log('[AddDownloadDialog] No directory, fetching from settings...');
+        const response = await window.electron.settings.get('defaultDirectory');
+        console.log('[AddDownloadDialog] Settings response:', response);
         if (response.success && response.value) {
           downloadDir = response.value;
+          console.log('[AddDownloadDialog] Using directory from settings:', downloadDir);
         }
       }
 
-      // If still no directory, use a default temp directory or let backend handle it
+      // If still no directory, let backend handle it
       if (!downloadDir) {
-        // Backend will use default Downloads folder
+        console.log('[AddDownloadDialog] No directory found, backend will use default');
         downloadDir = '';
       }
 
@@ -104,44 +145,70 @@ export function AddDownloadDialog({
         ...(scheduledTime && { scheduledTime: new Date(scheduledTime) }),
       };
 
+      console.log('[AddDownloadDialog] Submitting download with options:', options);
       const success = await addDownload(options);
+      
       if (success) {
+        // Close dialog on success
         handleClose();
       } else {
-        showError(
-          'İndirme Eklenemedi',
-          'İndirme eklenirken bir hata oluştu. Lütfen URL\'yi kontrol edip tekrar deneyin.'
-        );
+        // Keep dialog open on failure, store already showed error toast
+        setIsSubmitting(false);
       }
     } catch (error) {
       console.error('Failed to add download:', error);
       showError(
-        'Beklenmeyen Hata',
-        'İndirme eklenirken beklenmeyen bir hata oluştu. Lütfen tekrar deneyin.'
+        'İndirme Eklenemedi',
+        error instanceof Error ? error.message : 'İndirme eklenirken bir hata oluştu. Lütfen URL\'yi kontrol edip tekrar deneyin.'
       );
-    } finally {
       setIsSubmitting(false);
     }
   };
 
   const handleClose = () => {
-    onClose();
+    console.log('[AddDownloadDialog] Closing dialog');
+    if (!isSubmitting) {
+      onClose();
+    } else {
+      console.log('[AddDownloadDialog] Cannot close while submitting');
+    }
   };
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+    <div 
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm"
+      onClick={(e) => {
+        // Close when clicking on backdrop
+        if (e.target === e.currentTarget && !isSubmitting) {
+          console.log('[AddDownloadDialog] Backdrop clicked');
+          onClose();
+        }
+      }}
+    >
+      <div 
+        className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700">
           <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
             Yeni İndirme Ekle
           </h2>
           <button
-            onClick={handleClose}
-            className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              console.log('[AddDownloadDialog] X button clicked');
+              if (!isSubmitting) {
+                onClose();
+              }
+            }}
+            className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg p-1"
             disabled={isSubmitting}
+            aria-label="Close dialog"
           >
             <XMarkIcon className="w-6 h-6" />
           </button>
@@ -306,7 +373,14 @@ export function AddDownloadDialog({
           <div className="flex items-center justify-end gap-3 pt-4">
             <button
               type="button"
-              onClick={handleClose}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('[AddDownloadDialog] Cancel button clicked');
+                if (!isSubmitting) {
+                  onClose();
+                }
+              }}
               className="px-6 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
               disabled={isSubmitting}
             >

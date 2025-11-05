@@ -38,8 +38,9 @@ export class Segment extends EventEmitter {
   private headers: Record<string, string>;
   private timeout: number;
   private abortController?: AbortController;
-  private writeStream?: fs.WriteStream;
+  private writeStream?: fs.WriteStream | null;
   private retryManager: RetryManager;
+  private isPausing: boolean = false;
 
   constructor(options: SegmentOptions) {
     super();
@@ -90,17 +91,23 @@ export class Segment extends EventEmitter {
       if (fs.existsSync(this.tempFilePath)) {
         const stats = fs.statSync(this.tempFilePath);
         this.downloaded = stats.size;
+        console.log(`[Segment ${this.id}] Found temp file: ${this.downloaded} bytes`);
       }
 
-      // Calculate current range
-      const currentStart = this.start + this.downloaded;
+      // Calculate segment size
+      const segmentSize = this.end - this.start + 1;
       
-      // If already completed
-      if (currentStart > this.end) {
+      // If already completed (downloaded bytes equals or exceeds segment size)
+      if (this.downloaded >= segmentSize) {
+        console.log(`[Segment ${this.id}] Already completed: ${this.downloaded} / ${segmentSize} bytes`);
         this.status = 'completed';
         this.emit('complete', this.getProgress());
         return;
       }
+
+      // Calculate current range
+      const currentStart = this.start + this.downloaded;
+      console.log(`[Segment ${this.id}] Resuming from byte ${currentStart} to ${this.end}`);
 
       const config: AxiosRequestConfig = {
         method: 'GET',
@@ -148,8 +155,16 @@ export class Segment extends EventEmitter {
         response.data.pipe(this.writeStream);
         
         this.writeStream!.on('finish', () => {
-          this.status = 'completed';
-          this.emit('complete', this.getProgress());
+          // Check if we're pausing - don't mark as completed
+          if (this.isPausing) {
+            console.log(`[Segment ${this.id}] Stream finished due to pause, not marking as completed`);
+            this.isPausing = false;
+            this.status = 'pending';
+          } else {
+            console.log(`[Segment ${this.id}] Stream finished, marking as completed`);
+            this.status = 'completed';
+            this.emit('complete', this.getProgress());
+          }
           
           // Clean up references to allow garbage collection
           this.writeStream = undefined;
@@ -158,7 +173,15 @@ export class Segment extends EventEmitter {
           resolve();
         });
 
-        this.writeStream!.on('error', (error) => {
+        this.writeStream!.on('error', (error: any) => {
+          // Check if error is due to abort (cancel/pause)
+          if (error.code === 'ERR_CANCELED' || error.code === 'ABORT_ERR' || error.message?.includes('aborted')) {
+            // This is expected when pausing/canceling
+            this.status = 'pending';
+            resolve(); // Resolve instead of reject
+            return;
+          }
+          
           this.status = 'failed';
           this.emit('error', error);
           
@@ -168,7 +191,15 @@ export class Segment extends EventEmitter {
           reject(error);
         });
 
-        response.data.on('error', (error: Error) => {
+        response.data.on('error', (error: any) => {
+          // Check if error is due to abort (cancel/pause)
+          if (error.code === 'ERR_CANCELED' || error.code === 'ABORT_ERR' || error.message?.includes('aborted')) {
+            // This is expected when pausing/canceling
+            this.status = 'pending';
+            resolve(); // Resolve instead of reject
+            return;
+          }
+          
           this.status = 'failed';
           this.emit('error', error);
           
@@ -183,6 +214,7 @@ export class Segment extends EventEmitter {
       // Check if error is due to abort (cancel/pause)
       if (error.code === 'ERR_CANCELED' || error.message?.includes('aborted') || error.name === 'CanceledError') {
         // This is expected when pausing/canceling, don't treat as error
+        // Don't emit error, don't throw - just silently stop
         this.status = 'pending';
         return;
       }
@@ -209,16 +241,29 @@ export class Segment extends EventEmitter {
    * Pause the download
    */
   pause(): void {
-    if (this.abortController) {
-      this.abortController.abort();
+    try {
+      console.log(`[Segment ${this.id}] Pausing... current status: ${this.status}, downloaded: ${this.downloaded}`);
+      
+      // Set flag to prevent marking as completed when stream finishes
+      this.isPausing = true;
+      
+      if (this.abortController) {
+        this.abortController.abort();
+      }
+      
+      if (this.writeStream && !this.writeStream.destroyed) {
+        // Close the stream gracefully
+        this.writeStream.end();
+        this.writeStream = null;
+      }
+      
+      this.status = 'pending';
+      console.log(`[Segment ${this.id}] Paused, status: ${this.status}`);
+      this.emit('paused', this.getProgress());
+    } catch (error) {
+      // Ignore errors during pause - they're expected
+      console.log('[Segment] Pause error (expected):', error);
     }
-    
-    if (this.writeStream) {
-      this.writeStream.end();
-    }
-    
-    this.status = 'pending';
-    this.emit('paused', this.getProgress());
   }
 
   /**
@@ -227,9 +272,9 @@ export class Segment extends EventEmitter {
   cancel(): void {
     this.pause();
     
-    if (fs.existsSync(this.tempFilePath)) {
-      fs.unlinkSync(this.tempFilePath);
-    }
+    // Note: Don't delete temp file here
+    // Let the Download class handle cleanup after all segments are cancelled
+    // This prevents EPERM errors from trying to delete files that are still in use
     
     this.downloaded = 0;
     this.status = 'failed';

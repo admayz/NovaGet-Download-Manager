@@ -121,7 +121,7 @@ export class SchedulerService extends EventEmitter {
 
       // Clear the scheduled time since it's now started
       this.db.updateDownload(download.id, {
-        scheduled_time: undefined,
+        scheduled_time: null,
       });
 
       this.emit('downloadStarted', {

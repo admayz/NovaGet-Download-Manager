@@ -6,6 +6,7 @@ import { DownloadCard } from './DownloadCard';
 import { useDownloadStore } from '@/store/downloadStore';
 import { CategoryFilter, FileCategory } from './CategoryFilter';
 import { VirtualList } from './VirtualList';
+import { ConfirmDialog } from './ConfirmDialog';
 import {
   FunnelIcon,
   ArrowsUpDownIcon,
@@ -37,30 +38,18 @@ const VirtualDownloadList = memo(function VirtualDownloadList({
       containerHeight={800} // Max height before scrolling
       overscan={2}
       renderItem={(download) => (
-        <div
-          className={`relative mb-4 ${
-            selectedIds.has(download.downloadId)
-              ? 'ring-2 ring-purple-500 rounded-lg'
-              : ''
-          }`}
-        >
-          <input
-            type="checkbox"
-            checked={selectedIds.has(download.downloadId)}
-            onChange={() => onSelectDownload(download.downloadId)}
-            className="absolute top-4 left-4 z-10 w-4 h-4 text-purple-600 rounded focus:ring-purple-500"
+        <div className="mb-4">
+          <DownloadCard
+            download={download}
+            showSegments={showSegments}
+            isSelected={selectedIds.has(download.downloadId)}
+            onSelect={onSelectDownload}
+            onClick={
+              onDownloadClick
+                ? () => onDownloadClick(download)
+                : undefined
+            }
           />
-          <div className="pl-10">
-            <DownloadCard
-              download={download}
-              showSegments={showSegments}
-              onClick={
-                onDownloadClick
-                  ? () => onDownloadClick(download)
-                  : undefined
-              }
-            />
-          </div>
         </div>
       )}
     />
@@ -90,6 +79,19 @@ export function DownloadList({
   const [sortBy, setSortBy] = useState<SortBy>('date');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    variant: 'danger' | 'warning' | 'info';
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+    variant: 'warning',
+  });
 
   // Get category counts from downloads
   const categoryCounts = useMemo(() => {
@@ -195,35 +197,35 @@ export function DownloadList({
   };
 
   const handleBulkCancel = async () => {
-    if (
-      !confirm(
-        `Are you sure you want to cancel ${selectedIds.size} download(s)?`
-      )
-    ) {
-      return;
-    }
-
-    const promises = Array.from(selectedIds).map((id) =>
-      useDownloadStore.getState().cancelDownload(id)
-    );
-    await Promise.all(promises);
-    setSelectedIds(new Set());
+    setConfirmDialog({
+      isOpen: true,
+      title: 'İndirmeleri İptal Et',
+      message: `${selectedIds.size} indirmeyi iptal etmek istediğinizden emin misiniz?`,
+      variant: 'warning',
+      onConfirm: async () => {
+        const promises = Array.from(selectedIds).map((id) =>
+          useDownloadStore.getState().cancelDownload(id)
+        );
+        await Promise.all(promises);
+        setSelectedIds(new Set());
+      },
+    });
   };
 
   const handleBulkDelete = async () => {
-    if (
-      !confirm(
-        `Are you sure you want to delete ${selectedIds.size} download(s)? This will remove them from the list.`
-      )
-    ) {
-      return;
-    }
-
-    const promises = Array.from(selectedIds).map((id) =>
-      useDownloadStore.getState().cancelDownload(id)
-    );
-    await Promise.all(promises);
-    setSelectedIds(new Set());
+    setConfirmDialog({
+      isOpen: true,
+      title: 'İndirmeleri Sil',
+      message: `${selectedIds.size} indirmeyi silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.`,
+      variant: 'danger',
+      onConfirm: async () => {
+        const promises = Array.from(selectedIds).map((id) =>
+          useDownloadStore.getState().cancelDownload(id)
+        );
+        await Promise.all(promises);
+        setSelectedIds(new Set());
+      },
+    });
   };
 
   const toggleSort = (newSortBy: SortBy) => {
@@ -259,10 +261,9 @@ export function DownloadList({
               }
               onChange={handleSelectAll}
               className="w-4 h-4 text-purple-600 rounded focus:ring-purple-500"
-              title="Select All"
+              title="Tumunu Sec"
             />
-            <label className="ml-2 text-sm text-gray-700 dark:text-gray-300">
-              Select All
+            <label className="ml-2 text-sm text-gray-700 dark:text-gray-300">Tumunu Sec
             </label>
           </div>
           {/* Status Filter */}
@@ -273,12 +274,12 @@ export function DownloadList({
               onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
               className="px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
             >
-              <option value="all">All Status</option>
-              <option value="downloading">Downloading</option>
-              <option value="paused">Paused</option>
-              <option value="completed">Completed</option>
-              <option value="failed">Failed</option>
-              <option value="queued">Queued</option>
+              <option value="all">Tum Durumlar</option>
+              <option value="downloading">Indiriliyor</option>
+              <option value="paused">Duraklatildi</option>
+              <option value="completed">Tamamlandi</option>
+              <option value="failed">Basarisiz</option>
+              <option value="queued">Kuyrukta</option>
             </select>
           </div>
 
@@ -290,10 +291,10 @@ export function DownloadList({
               onChange={(e) => setSortBy(e.target.value as SortBy)}
               className="px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
             >
-              <option value="date">Date</option>
-              <option value="size">Size</option>
-              <option value="speed">Speed</option>
-              <option value="name">Name</option>
+              <option value="date">Tarih</option>
+              <option value="size">Boyut</option>
+              <option value="speed">Hiz</option>
+              <option value="name">Isim</option>
             </select>
             <button
               onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
@@ -308,26 +309,26 @@ export function DownloadList({
             <button
               onClick={pauseAll}
               className="flex items-center gap-1 px-3 py-1.5 bg-yellow-500 hover:bg-yellow-600 text-white rounded-md transition-colors text-sm"
-              title="Pause All"
+              title="Tumunu Duraklat"
             >
               <PauseIcon className="w-4 h-4" />
-              Pause All
+              Tumunu Duraklat
             </button>
             <button
               onClick={resumeAll}
               className="flex items-center gap-1 px-3 py-1.5 bg-green-500 hover:bg-green-600 text-white rounded-md transition-colors text-sm"
-              title="Resume All"
+              title="Tumunu Devam Ettir"
             >
               <PlayIcon className="w-4 h-4" />
-              Resume All
+              Tumunu Devam Ettir
             </button>
             <button
               onClick={clearCompleted}
               className="flex items-center gap-1 px-3 py-1.5 bg-gray-500 hover:bg-gray-600 text-white rounded-md transition-colors text-sm"
-              title="Clear Completed"
+              title="Temizle Completed"
             >
               <TrashIcon className="w-4 h-4" />
-              Clear
+              Temizle
             </button>
           </div>
         </div>
@@ -367,7 +368,7 @@ export function DownloadList({
                 onClick={() => setSelectedIds(new Set())}
                 className="text-sm text-gray-600 hover:text-gray-700 dark:text-gray-400 ml-auto"
               >
-                Clear Selection
+                Temizle Selection
               </button>
             </div>
           </div>
@@ -389,32 +390,18 @@ export function DownloadList({
           // Regular rendering for small lists
           <div className="space-y-4">
             {sortedDownloads.map((download) => (
-              <div
+              <DownloadCard
                 key={download.downloadId}
-                className={`relative ${
-                  selectedIds.has(download.downloadId)
-                    ? 'ring-2 ring-purple-500 rounded-lg'
-                    : ''
-                }`}
-              >
-                <input
-                  type="checkbox"
-                  checked={selectedIds.has(download.downloadId)}
-                  onChange={() => handleSelectDownload(download.downloadId)}
-                  className="absolute top-4 left-4 z-10 w-4 h-4 text-purple-600 rounded focus:ring-purple-500"
-                />
-                <div className="pl-10">
-                  <DownloadCard
-                    download={download}
-                    showSegments={showSegments}
-                    onClick={
-                      onDownloadClick
-                        ? () => onDownloadClick(download)
-                        : undefined
-                    }
-                  />
-                </div>
-              </div>
+                download={download}
+                showSegments={showSegments}
+                isSelected={selectedIds.has(download.downloadId)}
+                onSelect={handleSelectDownload}
+                onClick={
+                  onDownloadClick
+                    ? () => onDownloadClick(download)
+                    : undefined
+                }
+              />
             ))}
           </div>
         )
@@ -425,6 +412,19 @@ export function DownloadList({
           </p>
         </div>
       )}
+
+      {/* Confirm Dialog */}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        onClose={() => setConfirmDialog({ ...confirmDialog, isOpen: false })}
+        onConfirm={confirmDialog.onConfirm}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        confirmText="Evet"
+        cancelText="Hayır"
+        variant={confirmDialog.variant}
+      />
     </div>
   );
 }
+

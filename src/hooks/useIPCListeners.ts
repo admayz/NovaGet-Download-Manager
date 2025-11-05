@@ -14,13 +14,13 @@ export function useIPCListeners() {
       return;
     }
 
-    // Listen for progress updates (throttled)
+    // Listen for progress updates (throttled to 500ms for smooth updates)
     const unsubscribeProgress = window.electron.download.onProgress((progress) => {
       const now = Date.now();
       const lastUpdate = progressThrottleRef.current.get(progress.downloadId) || 0;
       
-      // Only update every 100ms per download
-      if (now - lastUpdate > 100) {
+      // Update every 500ms per download for smooth UI
+      if (now - lastUpdate > 500) {
         updateDownload(progress.downloadId, progress);
         progressThrottleRef.current.set(progress.downloadId, now);
       }
