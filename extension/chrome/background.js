@@ -12,18 +12,22 @@ let settings = {
 };
 
 // Load settings from storage
-chrome.storage.sync.get(['settings'], (result) => {
-  if (result.settings) {
-    settings = { ...settings, ...result.settings };
-  }
-});
+if (chrome.storage && chrome.storage.sync) {
+  chrome.storage.sync.get(['settings'], (result) => {
+    if (result && result.settings) {
+      settings = { ...settings, ...result.settings };
+    }
+  });
 
-// Listen for settings changes
-chrome.storage.onChanged.addListener((changes, namespace) => {
-  if (namespace === 'sync' && changes.settings) {
-    settings = { ...settings, ...changes.settings.newValue };
-  }
-});
+  // Listen for settings changes
+  chrome.storage.onChanged.addListener((changes, namespace) => {
+    if (namespace === 'sync' && changes.settings) {
+      settings = { ...settings, ...changes.settings.newValue };
+    }
+  });
+} else {
+  console.warn('chrome.storage.sync not available, using default settings');
+}
 
 /**
  * Check if a download should be intercepted based on settings
@@ -144,10 +148,14 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
 /**
  * Handle context menu downloads (right-click -> Save link as)
  */
-chrome.contextMenus.create({
-  id: 'novaget-download',
-  title: 'Download with NovaGet',
-  contexts: ['link']
+// Create context menu when extension is installed or updated
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.contextMenus.create({
+    id: 'novaget-download',
+    title: 'Download with NovaGet',
+    contexts: ['link']
+  });
+  console.log('NovaGet context menu created');
 });
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
@@ -218,7 +226,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === 'updateSettings') {
     settings = { ...settings, ...message.settings };
-    chrome.storage.sync.set({ settings });
+    if (chrome.storage && chrome.storage.sync) {
+      chrome.storage.sync.set({ settings });
+    }
     sendResponse({ success: true });
     return false;
   }

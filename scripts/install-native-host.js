@@ -13,12 +13,22 @@ const os = require('os');
 const { execSync } = require('child_process');
 
 const NATIVE_HOST_NAME = 'com.novaget.host';
-const EXTENSION_ID = 'EXTENSION_ID_PLACEHOLDER'; // Will be replaced after extension is published
+const EXTENSION_ID = 'fapnfhbgadaeaogkggfmdekedidmbnlf'; // Will be replaced after extension is published
 
 /**
  * Get the absolute path to the native host script
  */
 function getHostScriptPath() {
+  // Windows needs a .bat wrapper to run Node.js scripts
+  if (process.platform === 'win32') {
+    const batPath = path.resolve(__dirname, '../native-host/host.bat');
+    if (!fs.existsSync(batPath)) {
+      throw new Error(`Native host batch file not found at: ${batPath}`);
+    }
+    return batPath;
+  }
+  
+  // Unix systems can run .js directly with shebang
   const scriptPath = path.resolve(__dirname, '../native-host/host.js');
   
   // Make sure the script exists
@@ -27,12 +37,10 @@ function getHostScriptPath() {
   }
 
   // Make script executable on Unix
-  if (process.platform !== 'win32') {
-    try {
-      fs.chmodSync(scriptPath, '755');
-    } catch (error) {
-      console.warn('Warning: Could not make host script executable:', error.message);
-    }
+  try {
+    fs.chmodSync(scriptPath, '755');
+  } catch (error) {
+    console.warn('Warning: Could not make host script executable:', error.message);
   }
 
   return scriptPath;

@@ -1,5 +1,8 @@
 // NovaGet Extension Popup Script
 
+// Use browser API if available (Firefox), otherwise chrome API
+const browserAPI = typeof browser !== 'undefined' ? browser : chrome;
+
 const statusEl = document.getElementById('status');
 const statusTextEl = document.getElementById('status-text');
 const enabledToggle = document.getElementById('enabled-toggle');
@@ -9,7 +12,7 @@ const openOptionsBtn = document.getElementById('open-options');
 
 // Load current settings
 async function loadSettings() {
-  const response = await chrome.runtime.sendMessage({ type: 'getSettings' });
+  const response = await browserAPI.runtime.sendMessage({ type: 'getSettings' });
   const settings = response.settings;
 
   enabledToggle.checked = settings.enabled;
@@ -33,7 +36,8 @@ async function testConnection() {
   testConnectionBtn.disabled = true;
 
   try {
-    const response = await chrome.runtime.sendMessage({ type: 'ping' });
+    // Try native messaging first
+    const response = await browserAPI.runtime.sendMessage({ type: 'ping' });
     
     if (response.success) {
       updateStatus(true, 'Connected to NovaGet');
@@ -41,7 +45,22 @@ async function testConnection() {
       updateStatus(false, response.error || 'Connection failed');
     }
   } catch (error) {
-    updateStatus(false, 'Connection failed');
+    console.error('Native messaging failed, trying HTTP fallback:', error);
+    
+    // Fallback to HTTP
+    try {
+      const httpResponse = await fetch('http://localhost:42069/api/health');
+      const data = await httpResponse.json();
+      
+      if (data.status === 'ok') {
+        updateStatus(true, 'Connected to NovaGet (HTTP)');
+      } else {
+        updateStatus(false, 'Connection failed');
+      }
+    } catch (httpError) {
+      console.error('HTTP fallback also failed:', httpError);
+      updateStatus(false, 'Connection failed: ' + error.message);
+    }
   } finally {
     testConnectionBtn.disabled = false;
   }
@@ -54,7 +73,7 @@ async function saveSettings() {
     autoIntercept: autoInterceptToggle.checked
   };
 
-  await chrome.runtime.sendMessage({
+  await browserAPI.runtime.sendMessage({
     type: 'updateSettings',
     settings
   });
@@ -65,9 +84,32 @@ enabledToggle.addEventListener('change', saveSettings);
 autoInterceptToggle.addEventListener('change', saveSettings);
 testConnectionBtn.addEventListener('click', testConnection);
 openOptionsBtn.addEventListener('click', () => {
-  chrome.runtime.openOptionsPage();
+  browserAPI.runtime.openOptionsPage();
 });
+
+// Register extension ID with desktop app
+async function registerExtensionId() {
+  try {
+    // Use browser API if available (Firefox), otherwise chrome API
+    const runtime = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
+    const extensionId = runtime.id;
+    
+    // Only register for Chrome (Firefox uses fixed ID)
+    const isChrome = typeof browser === 'undefined';
+    if (isChrome && extensionId) {
+      await fetch('http://localhost:42069/api/register-extension', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ extensionId, browser: 'chrome' })
+      });
+      console.log('Extension ID registered:', extensionId);
+    }
+  } catch (error) {
+    console.log('Could not register extension ID:', error.message);
+  }
+}
 
 // Initialize
 loadSettings();
+registerExtensionId();
 testConnection();

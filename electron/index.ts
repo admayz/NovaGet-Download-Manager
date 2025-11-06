@@ -16,6 +16,7 @@ import { AIService } from './services/ai/AIService';
 import { CategoryService } from './services/category/CategoryService';
 import { SecurityCheckService } from './services/security/SecurityCheckService';
 import { VirusTotalService } from './services/virustotal/VirusTotalService';
+import { NativeMessagingServer } from './services/native-messaging/NativeMessagingServer';
 
 // Global error handlers
 process.on('uncaughtException', (error) => {
@@ -56,6 +57,7 @@ let aiService: AIService | null = null;
 let categoryService: CategoryService | null = null;
 let virusTotalService: VirusTotalService | null = null;
 let securityCheckService: SecurityCheckService | null = null;
+let nativeMessagingServer: NativeMessagingServer | null = null;
 
 async function initializeServices() {
   console.log('Initializing services...');
@@ -207,6 +209,11 @@ async function initializeServices() {
     // Initialize IPC bridge (i18n and settingsStore are guaranteed to be initialized at this point)
     ipcBridge = new IPCBridge(downloadManager, db, i18n!, settingsStore!, clipboardWatcher);
 
+    // Initialize native messaging server for browser extension
+    nativeMessagingServer = new NativeMessagingServer(downloadManager, 42069);
+    await nativeMessagingServer.start();
+    console.log('Native messaging server started on port', nativeMessagingServer.getPort());
+
     // Setup download event handlers for notifications and tray
     setupDownloadEventHandlers();
 
@@ -297,6 +304,26 @@ async function createApplication() {
 // App ready event
 app.whenReady().then(async () => {
   await createApplication();
+});
+
+// App quit event
+app.on('before-quit', async () => {
+  console.log('Application quitting...');
+  
+  // Stop native messaging server
+  if (nativeMessagingServer) {
+    await nativeMessagingServer.stop();
+  }
+  
+  // Stop clipboard watcher
+  if (clipboardWatcher) {
+    clipboardWatcher.stop();
+  }
+  
+  // Stop scheduler
+  if (schedulerService) {
+    schedulerService.stop();
+  }
 });
 
 // Prevent multiple instances (handled by DeepLinkHandler)

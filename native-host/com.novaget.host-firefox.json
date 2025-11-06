@@ -1,0 +1,7 @@
+{
+  "name": "com.novaget.host",
+  "description": "NovaGet Download Manager Native Messaging Host",
+  "path": "C:\\Users\\meade\\Documents\\Code\\DownloadManager\\native-host\\host.js",
+  "type": "stdio",
+  "allowed_extensions": ["novaget@example.com"]
+}

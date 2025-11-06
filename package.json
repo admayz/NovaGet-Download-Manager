@@ -16,6 +16,13 @@
     "package:mac": "electron-builder --mac",
     "package:linux": "electron-builder --linux",
     "install:native-host": "node scripts/install-native-host.js",
+    "install:native-host:firefox": "node scripts/install-native-host-firefox.js",
+    "setup:browsers": "node scripts/setup-all-browsers.js",
+    "update:extension-id": "node extension/auto-update-id.js",
+    "build:extension": "node extension/build.js all",
+    "build:extension:chrome": "node extension/build.js chrome",
+    "build:extension:firefox": "node extension/build.js firefox",
+    "build:extension:safari": "node extension/build.js safari",
     "uninstall:native-host": "node scripts/uninstall-native-host.js",
     "lint": "eslint . --ext .ts,.tsx",
     "format": "prettier --write \"**/*.{ts,tsx,json,md}\""
